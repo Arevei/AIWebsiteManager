@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Fonts — Cabinet Grotesk (headings), Satoshi (body), JetBrains Mono (mono/AI) */
+@import url("https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@700,800,900&f[]=satoshi@400,500,700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+:root {
+  --ar-bg: #ffffff;
+  --ar-surface: #f4f4f5;
+  --ar-ink: #0a0a0a;
+  --ar-ink-2: #525252;
+  --ar-ink-3: #a3a3a3;
+  --ar-line: #e5e5e5;
+  --ar-accent: #0055ff;
+  --ar-accent-hover: #0044cc;
+  --ar-ai: #ff3b30;
+  --ar-success: #22c55e;
+
+  /* shadcn tokens — light, neutral */
+  --background: 0 0% 100%;
+  --foreground: 0 0% 4%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 4%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 4%;
+  --primary: 0 0% 4%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 96%;
+  --secondary-foreground: 0 0% 4%;
+  --muted: 0 0% 96%;
+  --muted-foreground: 0 0% 32%;
+  --accent: 0 0% 96%;
+  --accent-foreground: 0 0% 4%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 90%;
+  --input: 0 0% 90%;
+  --ring: 0 0% 4%;
+  --radius: 0px;
+}
+
+* { @apply border-border; }
+
+html, body, #root {
+  background: var(--ar-bg);
+  color: var(--ar-ink);
+  -webkit-font-smoothing: antialiased;
+  font-family: "Satoshi", system-ui, sans-serif;
+}
+
+.font-display { font-family: "Cabinet Grotesk", "Satoshi", sans-serif; letter-spacing: -0.02em; }
+.font-mono { font-family: "JetBrains Mono", monospace; }
+
+/* Sharp-edge utilities */
+.ar-card { @apply border border-[color:var(--ar-line)] bg-white; }
+.ar-card-soft { @apply border border-[color:var(--ar-line)] bg-[color:var(--ar-surface)]; }
+
+/* Asymmetric grid helpers */
+.tetris {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+@media (max-width: 768px) { .tetris { grid-template-columns: 1fr; } }
+
+/* Eyebrow uppercase label */
+.eyebrow {
+  @apply font-mono text-xs uppercase tracking-[0.2em] text-[color:var(--ar-ink-2)];
+}
+
+/* Blinking AI cursor */
+@keyframes ar-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.ar-cursor { display: inline-block; width: 8px; height: 16px; background: var(--ar-ai); margin-left: 4px; animation: ar-blink 1s steps(1) infinite; vertical-align: middle; }
+
+/* Selection */
+::selection { background: var(--ar-ink); color: white; }
+
+/* Marquee */
+@keyframes ar-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.ar-marquee { animation: ar-marquee 30s linear infinite; }
+
+/* Stagger fade-up for hero */
+@keyframes ar-fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+.ar-fade-up { animation: ar-fade-up 0.6s ease-out both; }
+
+/* Make sure shadcn buttons honor sharp edges by default in this app */
+.btn-sharp { border-radius: 0 !important; }

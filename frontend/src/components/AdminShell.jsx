@@ -1,0 +1,72 @@
+import React from "react";
+import { Link, useLocation } from "react-router-dom";
+import { useAuth } from "../lib/auth";
+
+const TOP_NAV = [
+  { to: "/admin", label: "Overview" },
+  { to: "/admin/agent", label: "Agent" },
+  { to: "/admin/ai", label: "AI Studio" },
+  { to: "/admin/talk", label: "Talk" },
+  { to: "/admin/content", label: "Content" },
+  { to: "/admin/design", label: "Design" },
+  { to: "/admin/seo", label: "SEO / AEO" },
+  { to: "/admin/versions", label: "History" },
+  { to: "/admin/team", label: "Team" },
+  { to: "/admin/billing", label: "Billing" },
+];
+
+export default function AdminShell({ children, title, subtitle, actions }) {
+  const { user, logout } = useAuth();
+  const loc = useLocation();
+  return (
+    <div className="min-h-screen bg-white text-[color:var(--ar-ink)] flex flex-col" data-testid="admin-shell">
+      <header className="border-b border-[color:var(--ar-line)] bg-white px-6 py-3 flex items-center justify-between sticky top-0 z-40">
+        <div className="flex items-center gap-8">
+          <Link to="/admin" className="font-display text-xl font-black tracking-tighter" data-testid="brand-link">
+            AREVEI<span className="text-[color:var(--ar-ai)]">.</span>
+          </Link>
+          <nav className="hidden md:flex items-center gap-1 font-mono text-xs uppercase tracking-wider">
+            {TOP_NAV.map((n) => {
+              const active = loc.pathname === n.to || (n.to !== "/admin" && loc.pathname.startsWith(n.to));
+              return (
+                <Link
+                  key={n.to}
+                  to={n.to}
+                  data-testid={`nav-${n.label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
+                  className={`px-3 py-2 border ${active ? "border-[color:var(--ar-ink)] bg-[color:var(--ar-ink)] text-white" : "border-transparent text-[color:var(--ar-ink-2)] hover:text-[color:var(--ar-ink)]"}`}
+                >
+                  {n.label}
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
+        <div className="flex items-center gap-3 text-sm">
+          <span className="hidden sm:inline text-[color:var(--ar-ink-2)] font-mono text-xs" data-testid="user-email">{user?.email}</span>
+          <button
+            onClick={logout}
+            data-testid="logout-btn"
+            className="font-mono text-xs uppercase tracking-wider border border-[color:var(--ar-line)] px-3 py-2 hover:bg-[color:var(--ar-surface)]"
+          >Sign out</button>
+        </div>
+      </header>
+
+      <div className="px-6 py-8 border-b border-[color:var(--ar-line)] bg-[color:var(--ar-surface)]">
+        <div className="flex items-start justify-between gap-6 flex-wrap">
+          <div>
+            <div className="eyebrow mb-2">{subtitle}</div>
+            <h1 className="font-display text-3xl md:text-4xl font-black tracking-tighter" data-testid="page-title">{title}</h1>
+          </div>
+          <div className="flex items-center gap-2">{actions}</div>
+        </div>
+      </div>
+
+      <main className="flex-1 px-6 py-8">{children}</main>
+
+      <footer className="border-t border-[color:var(--ar-line)] px-6 py-4 text-xs font-mono text-[color:var(--ar-ink-3)] flex justify-between">
+        <span>AREVEI · Single codebase · Multi-tenant</span>
+        <span>v0.1</span>
+      </footer>
+    </div>
+  );
+}

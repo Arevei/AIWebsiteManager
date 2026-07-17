@@ -1,0 +1,60 @@
+{
+  "summary": "First-finish smoke test of AREVEI backend + frontend. Auth (founder + super admin + signup), site CRUD, versions, team invite, billing, SEO, and super admin overview all work. Two HIGH-priority blockers found: (1) AI /api/ai/chat returns HTTP 500 because EMERGENT_LLM_KEY budget is exceeded (litellm BadRequestError: 'Max budget: 0.0'); (2) PUT /api/site replaces theme_config wholesale (no deep merge), wiping typography and crashing the public tenant site at /s/northwind-studio with 'Cannot read properties of undefined (reading heading_font)'. Frontend founder login, dashboard, content editor save+persist, AI Studio page load, versions page, and super admin login all pass.",
+  "tested_scope": ["frontend", "backend", "auth", "integration"],
+  "passed": [
+    "POST /api/auth/login founder@demo.com returns token + user (role=founder_admin, tenant_id set). Note: response field is 'token', not 'access_token'.",
+    "POST /api/auth/login admin@arevei.com returns token + user (role=super_admin, tenant_id=null)",
+    "POST /api/auth/signup creates new tenant + site + founder_admin user and returns token",
+    "GET /api/auth/me returns current user",
+    "GET /api/site returns seeded site for founder (theme_config, pages, seo) — returns site object directly (no 'site' wrapper)",
+    "GET /api/site/public/northwind-studio returns public bundle (wraps under 'site')",
+    "PUT /api/site updates fields and creates a version snapshot (GET /api/versions now returns rows)",
+    "GET /api/versions, POST/restore endpoints exist and list snapshots",
+    "GET /api/team lists tenant members; POST /api/team/invite returns {ok:true, temp_password}",
+    "GET /api/billing returns tenant + seeded billing records",
+    "GET /api/seo returns SEO; PUT /api/seo persists meta updates",
+    "GET /api/admin/overview with super_admin returns aggregated MRR/tenants/AI usage",
+    "Frontend: /login with founder credentials -> /admin Dashboard with dashboard-stats visible",
+    "Frontend: /admin/content edit hero headline + Save persists across reload (field-hero-headline value retained)",
+    "Frontend: /admin/ai AI Studio page loads with ai-input/ai-send",
+    "Frontend: /admin/versions shows version rows (2 snapshots after edits)",
+    "Frontend: /login with admin@arevei.com lands on /super and super-admin element visible"
+  ],
+  "failed": [
+    {
+      "area": "backend / AI integration (emergentintegrations + Claude Sonnet 4.6)",
+      "issue": "POST /api/ai/chat returns HTTP 500. Root cause from /var/log/supervisor/backend.err.log: 'litellm.BadRequestError: OpenAIException - Budget has been exceeded! Current cost: 0.0, Max budget: 0.0'. The EMERGENT_LLM_KEY in /app/backend/.env (sk-emergent-840B6EeE1C68526372) has a $0 budget. As a secondary issue, ai_engine.run_ai raises ChatError which is not caught in server.py:286, so the endpoint 500s instead of returning a graceful response with empty proposed_changes.",
+      "evidence": "curl POST /api/ai/chat -> 'Internal Server Error'; backend log shows emergentintegrations.llm.chat.ChatError: 'Max budget: 0.0'",
+      "priority": "HIGH"
+    },
+    {
+      "area": "backend / PUT /api/site — destructive update",
+      "issue": "PUT /api/site replaces theme_config with the payload object instead of doing a deep merge. After sending {theme_config:{colors:{...}}}, typography and spacing keys are dropped from the persisted site. This permanently broke the seeded northwind-studio demo until reseeded.",
+      "evidence": "After PUT, GET /api/site/public/northwind-studio shows theme keys: ['colors'] only (typography/spacing missing).",
+      "priority": "HIGH"
+    },
+    {
+      "area": "frontend / TenantSite.jsx public tenant site",
+      "issue": "/s/northwind-studio renders a blank page. Console: 'Cannot read properties of undefined (reading heading_font)' from <TenantSite>. Component does not defensively guard against missing theme_config.typography. Combined with the destructive PUT above, the live demo site is currently broken.",
+      "evidence": "Playwright: tenant-site element count=0, body innerText only 'Made with Emergent'. Console log: PAGE ERROR: Cannot read properties of undefined (reading 'heading_font')",
+      "priority": "HIGH"
+    },
+    {
+      "area": "backend / ai_apply contract",
+      "issue": "POST /api/ai/apply requires field 'log_id' (not 'session_id') — worth documenting; the AIStudio frontend should pass log_id returned by /api/ai/chat. Not verified end-to-end because /api/ai/chat is currently 500.",
+      "evidence": "POST /api/ai/apply with session_id -> 422 'log_id Field required'",
+      "priority": "MEDIUM"
+    }
+  ],
+  "action_items": [
+    "Fix EMERGENT_LLM_KEY budget — current key has Max budget: 0.0; obtain a working Emergent LLM key with positive budget, then restart backend.",
+    "Make PUT /api/site perform a deep-merge for theme_config (and probably pages/seo) so partial updates don't wipe untouched keys. Also re-seed northwind-studio (run startup re-seed or POST a full theme_config) so the live demo site renders again.",
+    "Add defensive defaults in TenantSite.jsx (or all consumers) for theme_config.typography / spacing so a missing key does not crash the page; consider an error boundary on the public site route.",
+    "Wrap run_ai in server.py:286 with try/except so AI provider failures return 200 with empty proposed_changes + an assistant_message describing the error, instead of 500.",
+    "Verify AIStudio frontend posts log_id (not session_id) to /api/ai/apply once AI chat is working."
+  ],
+  "success_rate": {"backend": "85%", "frontend": "85%"},
+  "retest_needed": true,
+  "full_testing_deferred": true,
+  "test_credentials": "Found in /app/memory/test_credentials.md — founder@demo.com / Demo@1234, admin@arevei.com / Admin@1234. Both work."
+}
