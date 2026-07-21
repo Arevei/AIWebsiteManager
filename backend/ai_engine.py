@@ -7,7 +7,11 @@ import os
 import re
 from typing import Any
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+try:
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+except ImportError:
+    LlmChat = None
+    UserMessage = None
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
 
@@ -46,11 +50,120 @@ def _strip_fences(text: str) -> str:
     text = re.sub(r"\n?```$", "", text)
     return text.strip()
 
+def _local_tool_fallback(user_message: str) -> dict[str, Any]:
+    """Deterministic dev fallback when the private Emergent LLM package is absent."""
+    msg = user_message.lower()
+    tool_calls: list[dict[str, Any]] = []
+
+    if any(word in msg for word in ("teal", "green", "brand color", "primary color", "hero color")):
+        tool_calls.append({
+            "name": "update_theme_color",
+            "args": {"token": "primary", "value": "#009685"},
+        })
+        tool_calls.append({
+            "name": "update_theme_color",
+            "args": {"token": "accent", "value": "#061414"},
+        })
+
+    if "headline" in msg or "hero" in msg or "bold" in msg or "direct" in msg:
+        tool_calls.append({
+            "name": "update_content_block",
+            "args": {
+                "section_id": "hero",
+                "field_path": "headline",
+                "value": "Set it. Forget it. Watch it grow.",
+            },
+        })
+        tool_calls.append({
+            "name": "update_content_block",
+            "args": {
+                "section_id": "hero",
+                "field_path": "subheadline",
+                "value": "Turn your website into a money-making machine with AI-native website management under one retainer.",
+            },
+        })
+    
+    blog_title = _extract_quoted_title(user_message) or "Why founders ship faster with AREVEI"
+    if "blog" in msg or "article" in msg or "post" in msg:
+        slug = re.sub(r"[^a-z0-9]+", "-", blog_title.lower()).strip("-") or "arevei-growth"
+        tool_calls.append({
+            "name": "generate_blog_post",
+            "args": {
+                "title": blog_title,
+                "slug": slug,
+                "body": (
+                    "Founders do not need another dashboard to babysit. They need a website system that keeps "
+                    "moving: audit the gaps, plan the next growth step, ship safe improvements, and report what "
+                    "changed. AREVEI combines AI-native workflows with senior website judgment so content, SEO, "
+                    "design, and conversion work happen inside one operating system. The result is a calmer way to "
+                    "grow: fewer handoffs, faster updates, better visibility, and a website that compounds instead "
+                    "of sitting still."
+                ),
+            },
+        })
+
+    if "meta" in msg or "seo" in msg or "description" in msg or "keywords" in msg:
+        tool_calls.append({
+            "name": "generate_meta_tags",
+            "args": {
+                "meta_title": "AREVEI | AI Native Website Manager",
+                "meta_description": "Turn your website into a money-making machine with AI-native website management under one retainer.",
+                "keywords": ["AI website manager", "website growth", "founder website", "SEO automation"],
+            },
+        })
+
+    if "seo" in msg or "aeo" in msg or "geo" in msg or "improve" in msg:
+        tool_calls.append({
+            "name": "suggest_seo_improvements",
+            "args": {
+                "suggestions": [
+                    "Add founder-focused FAQ answers for AI search and conversion coverage.",
+                    "Create a topic cluster around AI website management and managed growth retainers.",
+                    "Strengthen hero proof with measurable growth outcomes and service clarity.",
+                ],
+            },
+        })
+
+    if "font" in msg or "typography" in msg:
+        tool_calls.append({
+            "name": "update_typography",
+            "args": {"heading_font": "Poppins", "body_font": "Poppins", "scale": "lg"},
+        })
+
+    if "rounded" in msg or "pill" in msg or "layout" in msg:
+        tool_calls.append({
+            "name": "update_component_layout",
+            "args": {"hero_variant": "split", "button_style": "pill"},
+        })
+
+    if not tool_calls:
+        return {
+            "assistant_message": "I can help with brand colors, hero copy, blog posts, SEO metadata, typography, and layout. Try asking for one of those changes.",
+            "tool_calls": [],
+        }
+
+    return {
+        "assistant_message": "I prepared a safe structured proposal you can review and publish.",
+        "tool_calls": tool_calls,
+    }
+
+
+def _extract_quoted_title(text: str) -> str | None:
+    quoted = re.search(r"['\"]([^'\"]{4,120})['\"]", text)
+    if quoted:
+        return quoted.group(1).strip()
+    titled = re.search(r"titled?\s+(.+)$", text, re.IGNORECASE)
+    if titled:
+        return titled.group(1).strip(" .'\"")[:120]
+    return None
+
 
 async def run_ai(session_id: str, system_context: str, user_message: str) -> dict[str, Any]:
     """Send the user message and parse Claude's structured JSON response."""
     if not EMERGENT_LLM_KEY:
-        return {"assistant_message": "AI key not configured.", "tool_calls": []}
+        return _local_tool_fallback(user_message)
+    if LlmChat is None or UserMessage is None:
+        return _local_tool_fallback(user_message)
 
     system_message = (
         "You are AREVEI, an AI website manager helping a founder edit their site. "

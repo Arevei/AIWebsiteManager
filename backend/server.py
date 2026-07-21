@@ -41,7 +41,13 @@ logger = logging.getLogger("arevei")
 logging.basicConfig(level=logging.INFO)
 
 mongo_url = os.environ["MONGO_URL"]
-mongo_client = AsyncIOMotorClient(mongo_url)
+if os.environ.get("USE_MOCK_DB", "").lower() == "true":
+    from mongomock_motor import AsyncMongoMockClient
+
+    mongo_client = AsyncMongoMockClient()
+    logger.info("Using in-memory mock MongoDB")
+else:
+    mongo_client = AsyncIOMotorClient(mongo_url)
 db = mongo_client[os.environ["DB_NAME"]]
 
 app = FastAPI(title="AREVEI API")
@@ -92,7 +98,27 @@ async def _seed_demo_founder():
     # Always ensure the demo site has a complete theme — re-seed if broken
     if existing:
         site = await db.sites.find_one({"tenant_id": existing.get("tenant_id")})
-        if site and "typography" not in (site.get("theme_config") or {}):
+        if not site:
+            tenant = await db.tenants.find_one({"id": existing.get("tenant_id")})
+            if not tenant:
+                tenant = Tenant(name="Northwind Studio", plan_tier="self_serve",
+                                billing_status="active", setup_fee_paid=True,
+                                monthly_revenue=99.0).model_dump()
+                await db.tenants.insert_one(tenant)
+                await db.users.update_one(
+                    {"id": existing["id"]},
+                    {"$set": {"tenant_id": tenant["id"]}},
+                )
+            site = Site(
+                tenant_id=tenant["id"] if isinstance(tenant, dict) else existing.get("tenant_id"),
+                slug=_slugify("Northwind Studio"),
+                theme_config=default_theme(),
+                pages=default_pages("Northwind Studio"),
+                seo=default_seo("Northwind Studio"),
+            ).model_dump()
+            await db.sites.insert_one(site)
+            logger.info("Re-created missing demo site")
+        elif "typography" not in (site.get("theme_config") or {}):
             await db.sites.update_one(
                 {"id": site["id"]},
                 {"$set": {

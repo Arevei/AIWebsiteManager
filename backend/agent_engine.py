@@ -7,7 +7,11 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+try:
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+except ImportError:
+    LlmChat = None
+    UserMessage = None
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
 
@@ -21,6 +25,8 @@ def _strip_fences(text: str) -> str:
 
 async def _ask_json(session_id: str, system: str, user: str) -> dict:
     if not EMERGENT_LLM_KEY:
+        return {}
+    if LlmChat is None or UserMessage is None:
         return {}
     chat = LlmChat(
         api_key=EMERGENT_LLM_KEY, session_id=session_id,
