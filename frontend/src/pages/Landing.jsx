@@ -53,7 +53,7 @@ export default function Landing() {
               <Link to="/signup" data-testid="hero-cta-primary" className="btn-accent px-7 py-3.5 text-sm">
                 Get your AI website manager <ArrowUpRight size={16} weight="bold" />
               </Link>
-              <a href="#how" data-testid="hero-cta-secondary" className="btn-ghost-light px-7 py-3.5 text-sm">
+              <a href="/#how" data-testid="hero-cta-secondary" className="btn-ghost-light px-7 py-3.5 text-sm">
                 See how it works
               </a>
             </div>

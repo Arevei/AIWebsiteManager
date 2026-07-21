@@ -22,6 +22,7 @@ import Billing from "./pages/admin/Billing";
 
 import SuperAdmin from "./pages/super/SuperAdmin";
 import TenantSite from "./pages/site/TenantSite";
+import Home from "./pages/areveipage";
 
 function Protected({ children, role }) {
   const { user, loading } = useAuth();
@@ -38,7 +39,8 @@ export default function App() {
         <BrowserRouter>
           <Toaster position="top-center" richColors />
           <Routes>
-            <Route path="/" element={<Landing />} />
+            {/* <Route path="/" element={<Landing />} /> */}
+            <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
             <Route path="/s/:slug" element={<TenantSite />} />
