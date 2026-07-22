@@ -5,6 +5,7 @@ import { ThemeToggle } from "../lib/theme";
 
 const TOP_NAV = [
   { to: "/admin", label: "Overview" },
+  { to: "/admin/dev", label: "Dev Platform" },
   { to: "/admin/agent", label: "Agent" },
   { to: "/admin/ai", label: "AI Studio" },
   { to: "/admin/talk", label: "Talk" },

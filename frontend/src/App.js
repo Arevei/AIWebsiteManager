@@ -10,6 +10,7 @@ import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 
 import Dashboard from "./pages/admin/Dashboard";
+import DeveloperPlatform from "./pages/admin/DeveloperPlatform";
 import Agent from "./pages/admin/Agent";
 import AIStudio from "./pages/admin/AIStudio";
 import Talk from "./pages/admin/Talk";
@@ -46,6 +47,7 @@ export default function App() {
             <Route path="/s/:slug" element={<TenantSite />} />
 
             <Route path="/admin" element={<Protected><Dashboard /></Protected>} />
+            <Route path="/admin/dev" element={<Protected><DeveloperPlatform /></Protected>} />
             <Route path="/admin/agent" element={<Protected><Agent /></Protected>} />
             <Route path="/admin/ai" element={<Protected><AIStudio /></Protected>} />
             <Route path="/admin/talk" element={<Protected><Talk /></Protected>} />

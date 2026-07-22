@@ -567,6 +567,8 @@ async def root():
 app.include_router(api)
 from agent_routes import build_agent_router
 app.include_router(build_agent_router(db))
+from github_platform import build_github_platform_router
+app.include_router(build_github_platform_router(db))
 
 app.add_middleware(
     CORSMiddleware,
