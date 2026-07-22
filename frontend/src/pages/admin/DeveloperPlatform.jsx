@@ -7,9 +7,11 @@ import {
   GithubLogo,
   GitCommit,
   Lightning,
+  Play,
   PaperPlaneRight,
   RocketLaunch,
   Sparkle,
+  Terminal,
 } from "@phosphor-icons/react";
 import AdminShell from "../../components/AdminShell";
 import { api } from "../../lib/api";
@@ -98,6 +100,9 @@ export default function DeveloperPlatform() {
   const [changes, setChanges] = useState([]);
   const [preview, setPreview] = useState(null);
   const [mainView, setMainView] = useState("editor");
+  const [runtime, setRuntime] = useState(null);
+  const [runtimeLogs, setRuntimeLogs] = useState([]);
+  const [runtimeProvider, setRuntimeProvider] = useState(null);
   const [commitMessage, setCommitMessage] = useState("Apply AI-assisted changes");
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -107,8 +112,42 @@ export default function DeveloperPlatform() {
     [repos, selectedRepo]
   );
 
+  const applyWorkspaceState = async (data) => {
+    if (!data?.workspace) return false;
+    setWorkspace(data.workspace);
+    setSelectedRepo(data.workspace.repo_id);
+    setTree(data.tree || []);
+    setChanges(data.changes || []);
+    setRuntime(data.runtime || null);
+    setRuntimeLogs(data.runtime_logs || []);
+    setRuntimeProvider(data.provider || null);
+    const first = data.tree?.[0]?.path;
+    if (first) await openFile(data.workspace.id, first);
+    await loadPreview(data.workspace.id);
+    return true;
+  };
+
+  const refreshCurrentWorkspace = async () => {
+    try {
+      const res = await api.get("/workspaces/current");
+      return await applyWorkspaceState(res.data);
+    } catch {
+      return false;
+    }
+  };
+
+  const refreshProvider = async () => {
+    try {
+      const res = await api.get("/runtime/providers");
+      setRuntimeProvider(res.data.active || null);
+    } catch {
+      setRuntimeProvider(null);
+    }
+  };
+
   const refreshRepos = async () => {
     try {
+      await refreshProvider();
       const res = await api.get("/github/repos");
       setRepos(res.data.repositories || []);
       setInstallations(res.data.installations || []);
@@ -132,9 +171,12 @@ export default function DeveloperPlatform() {
       api.get(`/github/install/callback?${params.toString()}`)
         .then(() => toast.success("GitHub App connected"))
         .catch((e) => toast.error(e.response?.data?.detail || "GitHub callback failed"))
-        .finally(() => refreshRepos());
+        .finally(async () => {
+          await refreshRepos();
+          await refreshCurrentWorkspace();
+        });
     } else {
-      refreshRepos();
+      refreshRepos().then(() => refreshCurrentWorkspace());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search]);
@@ -184,10 +226,19 @@ export default function DeveloperPlatform() {
       const treeRes = await api.get(`/workspaces/${res.data.id}/tree`);
       setTree(treeRes.data.tree || []);
       setChanges([]);
+      setRuntime(null);
+      setRuntimeLogs([]);
+      setRuntimeProvider(null);
       const first = treeRes.data.tree?.[0]?.path;
       if (first) await openFile(res.data.id, first);
       await loadPreview(res.data.id);
-      toast.success("Repository workspace loaded");
+      const runtimeRes = await api.post(`/workspaces/${res.data.id}/runtime/start`, {
+        install_command: "npm install",
+        dev_command: "npm run dev",
+      });
+      setRuntime(runtimeRes.data);
+      await refreshRuntime(res.data.id);
+      toast.success("Repository imported into workspace");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Could not load repository");
     } finally {
@@ -211,6 +262,57 @@ export default function DeveloperPlatform() {
       setPreview(res.data);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Could not build preview");
+    }
+  };
+
+  const refreshRuntime = async (workspaceId) => {
+    const id = workspaceId || workspace?.id;
+    if (!id) return;
+    try {
+      const res = await api.get(`/workspaces/${id}/runtime`);
+      setRuntime(res.data.runtime);
+      setRuntimeLogs(res.data.logs || []);
+      setRuntimeProvider(res.data.provider || null);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not load runtime status");
+    }
+  };
+
+  const startRuntime = async () => {
+    if (!workspace) return;
+    try {
+      const res = await api.post(`/workspaces/${workspace.id}/runtime/start`, {
+        install_command: selectedRepoDoc?.install_command || "npm install",
+        dev_command: selectedRepoDoc?.dev_command || "npm run dev",
+      });
+      setRuntime(res.data);
+      await refreshRuntime(workspace.id);
+      toast.success("Workspace runtime started");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not start runtime");
+    }
+  };
+
+  const syncRuntime = async () => {
+    if (!workspace) return;
+    try {
+      const res = await api.post(`/workspaces/${workspace.id}/runtime/sync`);
+      setRuntime(res.data);
+      await refreshRuntime(workspace.id);
+      toast.success("Runtime synced with accepted files");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not sync runtime");
+    }
+  };
+
+  const runRuntimeCommand = async (command) => {
+    if (!workspace) return;
+    try {
+      const res = await api.post(`/workspaces/${workspace.id}/runtime/commands`, { command });
+      await refreshRuntime(workspace.id);
+      toast.success(res.data.status || "Command queued");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not run runtime command");
     }
   };
 
@@ -266,6 +368,7 @@ export default function DeveloperPlatform() {
       if (accept && selectedPath) await openFile(workspace.id, selectedPath);
       if (accept) {
         await loadPreview();
+        if (runtime) await syncRuntime();
         setMainView("preview");
       }
       toast.success(accept ? "Change accepted" : "Change rejected");
@@ -313,11 +416,86 @@ export default function DeveloperPlatform() {
             Reset GitHub
           </button>
           <button onClick={loadWorkspace} disabled={!selectedRepo || loading} className="btn-primary px-4 py-2 text-xs">
-            <GitBranch size={16} /> Load repo
+            <GitBranch size={16} /> Import repo
           </button>
         </div>
       }
     >
+      {!workspace ? (
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)] gap-6 min-h-[560px]">
+          <section className="ar-card p-8 flex flex-col justify-between">
+            <div>
+              <div className="eyebrow mb-4">Start workspace</div>
+              <h2 className="font-display text-4xl font-black tracking-tighter mb-4">Import a GitHub repository</h2>
+              <p className="text-[color:var(--ar-ink-2)] max-w-2xl leading-7">
+                Choose a repository once. AREVEI will remember it and open directly into the coding workspace, chat, review queue, and runtime controls on future visits.
+              </p>
+
+              {syncErrors.length > 0 && (
+                <div className="mt-6 border border-[color:var(--ar-error)] bg-red-50 p-4 font-mono text-xs text-red-700">
+                  <div className="font-bold mb-1">GitHub sync issue</div>
+                  <div>{syncErrors[0].detail}</div>
+                </div>
+              )}
+
+              <div className="mt-8 grid gap-4 max-w-xl">
+                <label>
+                  <span className="eyebrow block mb-2">Repository</span>
+                  <select
+                    value={selectedRepo}
+                    onChange={(e) => setSelectedRepo(e.target.value)}
+                    className="input h-12 font-mono text-sm"
+                  >
+                    {repos.length === 0 && <option value="">No repositories loaded</option>}
+                    {repos.map((repo) => (
+                      <option key={repo.id} value={repo.id}>{repo.full_name}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <button onClick={loadWorkspace} disabled={!selectedRepo || loading} className="btn-primary px-5 py-3 text-sm w-fit">
+                  <GitBranch size={18} /> Import repository into workspace
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-[color:var(--ar-line)] border border-[color:var(--ar-line)] mt-8">
+              {[
+                ["Connect", githubConfigured ? "GitHub App mode" : "Mock mode"],
+                ["Import", `${repos.length} repo(s) available`],
+                ["Runtime", runtimeProvider?.provider || "managed-static"],
+              ].map(([label, value]) => (
+                <div key={label} className="bg-white p-4">
+                  <div className="eyebrow mb-2">{label}</div>
+                  <div className="font-mono text-xs text-[color:var(--ar-ink-2)]">{value}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <aside className="ar-card p-6">
+            <div className="eyebrow mb-4">Workspace engine</div>
+            <div className="font-display text-2xl font-bold tracking-tighter">CodeSandbox runtime path</div>
+            <div className="mt-4 space-y-3 text-sm text-[color:var(--ar-ink-2)] leading-6">
+              <p>AREVEI owns GitHub auth, custom AI, diff review, accept/reject, commits, billing, and deployment control.</p>
+              <p>The runtime provider supplies isolated filesystem, install commands, terminal, and live preview when the SDK bridge is connected.</p>
+            </div>
+            <div className="mt-6 border border-[color:var(--ar-line)] bg-[color:var(--ar-surface)] p-4 font-mono text-xs text-[color:var(--ar-ink-2)]">
+              <div>Provider: {runtimeProvider?.provider || "managed-static"}</div>
+              <div>Commands: {runtimeProvider?.capabilities?.commands ? "enabled" : "needs CodeSandbox bridge"}</div>
+              <div>Live preview: {runtimeProvider?.capabilities?.live_preview ? "enabled" : "static fallback"}</div>
+            </div>
+            <div className="mt-6 flex gap-2">
+              <button onClick={connectGithub} className="btn-outline px-4 py-2 text-xs">
+                <GithubLogo size={16} /> Connect GitHub
+              </button>
+              <button onClick={resetGithub} className="btn-outline px-4 py-2 text-xs">
+                Reset
+              </button>
+            </div>
+          </aside>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)_420px] gap-4 h-[calc(100vh-250px)] min-h-[680px]">
         <aside className="ar-card overflow-hidden flex flex-col">
           <div className="p-4 border-b border-[color:var(--ar-line)]">
@@ -369,7 +547,14 @@ export default function DeveloperPlatform() {
           </div>
           <div className="flex-1 min-h-0">
             {mainView === "preview" ? (
-              preview?.html ? (
+              runtime?.preview_url ? (
+                <iframe
+                  title="Live runtime preview"
+                  src={runtime.preview_url}
+                  className="w-full h-full bg-white"
+                  sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
+                />
+              ) : preview?.html ? (
                 <iframe
                   title="Workspace preview"
                   srcDoc={preview.html}
@@ -420,6 +605,46 @@ export default function DeveloperPlatform() {
             </form>
           </div>
 
+          <div className="p-4 border-b border-[color:var(--ar-line)] bg-[color:var(--ar-surface)]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="eyebrow">Runtime</div>
+                <div className="font-mono text-[11px] text-[color:var(--ar-ink-3)] mt-1">
+                  {runtime?.provider || runtimeProvider?.provider || "not started"} · {runtime?.status || "idle"}
+                </div>
+              </div>
+              <Terminal size={18} className="text-[color:var(--ar-ai)]" />
+            </div>
+            {runtime?.setup_hint && (
+              <div className="mt-3 border border-[color:var(--ar-line)] bg-white p-2 font-mono text-[11px] text-[color:var(--ar-ink-2)]">
+                {runtime.setup_hint}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              <button onClick={startRuntime} disabled={!workspace} className="btn-outline px-2 py-2 text-xs">
+                <Play size={14} /> Start
+              </button>
+              <button onClick={syncRuntime} disabled={!runtime} className="btn-outline px-2 py-2 text-xs">
+                Sync files
+              </button>
+              <button onClick={() => runRuntimeCommand(runtime?.install_command || "npm install")} disabled={!runtime} className="btn-outline px-2 py-2 text-xs">
+                Install
+              </button>
+              <button onClick={() => runRuntimeCommand(runtime?.dev_command || "npm run dev")} disabled={!runtime} className="btn-outline px-2 py-2 text-xs">
+                Run dev
+              </button>
+            </div>
+            {runtimeLogs.length > 0 && (
+              <div className="mt-3 max-h-24 overflow-y-auto border border-[color:var(--ar-line)] bg-white p-2">
+                {runtimeLogs.slice(-6).map((log) => (
+                  <div key={log.id} className="font-mono text-[10px] text-[color:var(--ar-ink-3)]">
+                    {log.level}: {log.message}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="flex-1 overflow-y-auto p-4">
             <ChangeReview changes={changes} onApply={applyChange} />
           </div>
@@ -455,6 +680,7 @@ export default function DeveloperPlatform() {
           </div>
         </aside>
       </div>
+      )}
     </AdminShell>
   );
 }

@@ -51,7 +51,32 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
     r = APIRouter(prefix="/api")
 
     def _app_configured() -> bool:
+        if os.environ.get("USE_MOCK_GITHUB", "").lower() == "true":
+            return False
         return bool(os.environ.get("GITHUB_APP_ID") and os.environ.get("GITHUB_PRIVATE_KEY"))
+
+    def _runtime_provider() -> dict:
+        configured = bool(os.environ.get("CODESANDBOX_API_KEY"))
+        bridge_enabled = os.environ.get("CODESANDBOX_BRIDGE_ENABLED", "").lower() == "true"
+        return {
+            "provider": "codesandbox" if configured else "managed-static",
+            "configured": configured,
+            "bridge_enabled": bridge_enabled,
+            "capabilities": {
+                "filesystem": True,
+                "commands": configured and bridge_enabled,
+                "live_preview": configured and bridge_enabled,
+                "snapshots": configured and bridge_enabled,
+                "git_persistence": configured and bridge_enabled,
+            },
+            "setup_hint": (
+                "Set CODESANDBOX_API_KEY to enable the CodeSandbox provider."
+                if not configured
+                else "CodeSandbox API key detected. Enable CODESANDBOX_BRIDGE_ENABLED=true after wiring the SDK bridge."
+                if not bridge_enabled
+                else None
+            ),
+        }
 
     def _public_base_url() -> str:
         return os.environ.get("PUBLIC_BACKEND_URL") or os.environ.get("REACT_APP_BACKEND_URL") or ""
@@ -416,6 +441,21 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             {"workspace_id": workspace_id}, {"_id": 0}
         ).sort("path", 1).to_list(1000)
 
+    async def _runtime_session(workspace_id: str, user: dict) -> dict | None:
+        return await db.runtime_sessions.find_one(
+            {"workspace_id": workspace_id, "tenant_id": user.get("tenant_id")},
+            {"_id": 0},
+        )
+
+    async def _append_runtime_log(runtime_id: str, message: str, level: str = "info"):
+        await db.runtime_logs.insert_one({
+            "id": new_id(),
+            "runtime_id": runtime_id,
+            "level": level,
+            "message": message,
+            "created_at": now_iso(),
+        })
+
     async def _load_real_repo(repo: dict, branch: str) -> tuple[list[dict], dict]:
         token = await _installation_token(repo["installation_id"])
         owner, name = repo["full_name"].split("/", 1)
@@ -666,6 +706,9 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "ai_change_sets",
             "commit_jobs",
             "deployment_jobs",
+            "runtime_sessions",
+            "runtime_logs",
+            "developer_states",
         ):
             res = await db[coll].delete_many({"tenant_id": tid})
             results[coll] = res.deleted_count
@@ -708,8 +751,53 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                     await _upsert_workspace_file(workspace["id"], fetched["path"], fetched["content"], fetched["content"])
                 except Exception:
                     continue
+        await db.developer_states.update_one(
+            {"tenant_id": user["tenant_id"], "user_id": user["user_id"]},
+            {"$set": {
+                "tenant_id": user["tenant_id"],
+                "user_id": user["user_id"],
+                "active_workspace_id": workspace["id"],
+                "active_repo_id": repo["id"],
+                "updated_at": now_iso(),
+            }, "$setOnInsert": {"id": new_id(), "created_at": now_iso()}},
+            upsert=True,
+        )
         workspace.pop("_id", None)
         return workspace
+
+    @r.get("/workspaces/current")
+    async def current_workspace(user=Depends(current_user)):
+        state = await db.developer_states.find_one(
+            {"tenant_id": user.get("tenant_id"), "user_id": user["user_id"]}, {"_id": 0}
+        )
+        if not state or not state.get("active_workspace_id"):
+            return {"workspace": None}
+        workspace = await db.workspace_sessions.find_one(
+            {"id": state["active_workspace_id"], "tenant_id": user.get("tenant_id")}, {"_id": 0}
+        )
+        if not workspace:
+            return {"workspace": None}
+        files = await _active_files(workspace["id"])
+        loaded = {f["path"] for f in files}
+        tree = [{**item, "loaded": item["path"] in loaded} for item in workspace.get("tree", [])]
+        changes = await db.ai_change_sets.find(
+            {"workspace_id": workspace["id"], "tenant_id": user["tenant_id"]}, {"_id": 0}
+        ).sort("created_at", -1).to_list(100)
+        runtime = await _runtime_session(workspace["id"], user)
+        logs = []
+        if runtime:
+            logs = await db.runtime_logs.find(
+                {"runtime_id": runtime["id"]}, {"_id": 0}
+            ).sort("created_at", 1).to_list(200)
+        return {
+            "workspace": workspace,
+            "tree": tree,
+            "loaded_files": files,
+            "changes": changes,
+            "runtime": runtime,
+            "runtime_logs": logs,
+            "provider": _runtime_provider(),
+        }
 
     @r.get("/workspaces/{workspace_id}/tree")
     async def workspace_tree(workspace_id: str, user=Depends(current_user)):
@@ -748,6 +836,121 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         await _workspace(workspace_id, user)
         files = await _active_files(workspace_id)
         return _preview_html(files)
+
+    @r.get("/runtime/providers")
+    async def runtime_providers(user=Depends(current_user)):
+        await _tenant_id(user)
+        return {
+            "active": _runtime_provider(),
+            "recommended": "codesandbox",
+            "architecture": "AREVEI controls auth, AI, review, commit, and billing; the runtime provider supplies isolated filesystem, commands, and preview.",
+        }
+
+    @r.post("/workspaces/{workspace_id}/runtime/start")
+    async def start_workspace_runtime(workspace_id: str, payload: dict, user=Depends(current_user)):
+        workspace = await _workspace(workspace_id, user)
+        repo = await _repo(workspace["repo_id"], user)
+        provider = _runtime_provider()
+        files = await _active_files(workspace_id)
+        existing = await _runtime_session(workspace_id, user)
+        if existing:
+            return existing
+
+        runtime = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "user_id": user["user_id"],
+            "workspace_id": workspace_id,
+            "repo_id": repo["id"],
+            "provider": provider["provider"],
+            "provider_configured": provider["configured"],
+            "status": "ready" if provider["capabilities"]["commands"] else "bridge_pending" if provider["configured"] else "fallback_ready",
+            "repo_full_name": workspace["repo_full_name"],
+            "branch": workspace["branch"],
+            "root_path": payload.get("root_path") or "/workspace/app",
+            "install_command": payload.get("install_command") or "npm install",
+            "dev_command": payload.get("dev_command") or "npm run dev",
+            "preview_url": None,
+            "files_synced": len(files),
+            "capabilities": provider["capabilities"],
+            "setup_hint": provider["setup_hint"],
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        if not provider["configured"]:
+            runtime["preview_mode"] = "static_workspace_preview"
+            runtime["note"] = "Using AREVEI static preview. Connect CodeSandbox for terminal, dependency install, and live dev server."
+        else:
+            runtime["preview_mode"] = "external_runtime" if provider["capabilities"]["commands"] else "external_runtime_pending"
+            runtime["note"] = (
+                "CodeSandbox runtime bridge is enabled."
+                if provider["capabilities"]["commands"]
+                else "CodeSandbox key is configured, but command execution is pending the SDK bridge."
+            )
+
+        await db.runtime_sessions.insert_one(runtime)
+        await _append_runtime_log(runtime["id"], f"Runtime session created for {workspace['repo_full_name']} using {runtime['provider']}.")
+        await _append_runtime_log(runtime["id"], f"Synced {len(files)} workspace file(s) into runtime state.")
+        runtime.pop("_id", None)
+        return runtime
+
+    @r.get("/workspaces/{workspace_id}/runtime")
+    async def get_workspace_runtime(workspace_id: str, user=Depends(current_user)):
+        await _workspace(workspace_id, user)
+        runtime = await _runtime_session(workspace_id, user)
+        if not runtime:
+            return {"runtime": None, "logs": [], "provider": _runtime_provider()}
+        logs = await db.runtime_logs.find(
+            {"runtime_id": runtime["id"]}, {"_id": 0}
+        ).sort("created_at", 1).to_list(200)
+        return {"runtime": runtime, "logs": logs, "provider": _runtime_provider()}
+
+    @r.post("/workspaces/{workspace_id}/runtime/sync")
+    async def sync_workspace_runtime(workspace_id: str, user=Depends(current_user)):
+        await _workspace(workspace_id, user)
+        runtime = await _runtime_session(workspace_id, user)
+        if not runtime:
+            raise HTTPException(400, "Start runtime first")
+        files = await _active_files(workspace_id)
+        await db.runtime_sessions.update_one(
+            {"id": runtime["id"]},
+            {"$set": {"files_synced": len(files), "updated_at": now_iso()}},
+        )
+        await _append_runtime_log(runtime["id"], f"Synced {len(files)} file(s) after review/apply.")
+        return await db.runtime_sessions.find_one({"id": runtime["id"]}, {"_id": 0})
+
+    @r.post("/workspaces/{workspace_id}/runtime/commands")
+    async def run_runtime_command(workspace_id: str, payload: dict, user=Depends(current_user)):
+        await _workspace(workspace_id, user)
+        runtime = await _runtime_session(workspace_id, user)
+        if not runtime:
+            raise HTTPException(400, "Start runtime first")
+        command = (payload.get("command") or "").strip()
+        if not command:
+            raise HTTPException(400, "Command is required")
+        if not runtime.get("capabilities", {}).get("commands"):
+            msg = (
+                f"Skipped `{command}` because runtime command execution is not enabled yet. "
+                "Static preview is still available while the CodeSandbox bridge is being wired."
+            )
+            await _append_runtime_log(runtime["id"], msg, "warning")
+            await db.runtime_sessions.update_one(
+                {"id": runtime["id"]},
+                {"$set": {"status": runtime.get("status", "fallback_ready"), "updated_at": now_iso()}},
+            )
+            return {"ok": True, "status": runtime.get("status", "fallback_ready"), "output": msg}
+
+        output = (
+            f"Queued `{command}` for CodeSandbox runtime. "
+            "Actual SDK command execution will be wired through the CodeSandbox bridge module."
+        )
+        updates: dict[str, Any] = {"status": "command_queued", "last_command": command, "updated_at": now_iso()}
+        if "dev" in command or "start" in command:
+            updates["status"] = "preview_pending"
+            updates["preview_url"] = payload.get("preview_url")
+        await db.runtime_sessions.update_one({"id": runtime["id"]}, {"$set": updates})
+        await _append_runtime_log(runtime["id"], output)
+        return {"ok": True, "status": updates["status"], "output": output}
 
     @r.post("/workspaces/{workspace_id}/ai/chat")
     async def workspace_ai_chat(workspace_id: str, payload: dict, user=Depends(current_user)):
