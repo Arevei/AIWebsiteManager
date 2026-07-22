@@ -91,12 +91,16 @@ export default function DeveloperPlatform() {
   const [githubConfigured, setGithubConfigured] = useState(false);
   const [syncErrors, setSyncErrors] = useState([]);
   const [selectedRepo, setSelectedRepo] = useState("");
+  const [project, setProject] = useState(null);
+  const [chat, setChat] = useState(null);
   const [workspace, setWorkspace] = useState(null);
   const [tree, setTree] = useState([]);
   const [selectedPath, setSelectedPath] = useState("");
   const [file, setFile] = useState(null);
   const [editorValue, setEditorValue] = useState("");
   const [aiInput, setAiInput] = useState("");
+  const [startPrompt, setStartPrompt] = useState("");
+  const [chatMessages, setChatMessages] = useState([]);
   const [changes, setChanges] = useState([]);
   const [preview, setPreview] = useState(null);
   const [mainView, setMainView] = useState("editor");
@@ -114,10 +118,13 @@ export default function DeveloperPlatform() {
 
   const applyWorkspaceState = async (data) => {
     if (!data?.workspace) return false;
+    setProject(data.project || data.workspace.project || null);
+    setChat(data.chat || data.workspace.chat || null);
     setWorkspace(data.workspace);
     setSelectedRepo(data.workspace.repo_id);
     setTree(data.tree || []);
     setChanges(data.changes || []);
+    setChatMessages(data.messages || []);
     setRuntime(data.runtime || null);
     setRuntimeLogs(data.runtime_logs || []);
     setRuntimeProvider(data.provider || null);
@@ -202,11 +209,14 @@ export default function DeveloperPlatform() {
       setInstallations([]);
       setSyncErrors([]);
       setSelectedRepo("");
+      setProject(null);
+      setChat(null);
       setWorkspace(null);
       setTree([]);
       setFile(null);
       setEditorValue("");
       setChanges([]);
+      setChatMessages([]);
       setPreview(null);
       toast.success("GitHub workspace data cleared. Connect GitHub again.");
     } catch (e) {
@@ -223,12 +233,15 @@ export default function DeveloperPlatform() {
         mode: "ai_branch",
       });
       setWorkspace(res.data);
+      setProject(res.data.project || null);
+      setChat(res.data.chat || null);
       const treeRes = await api.get(`/workspaces/${res.data.id}/tree`);
       setTree(treeRes.data.tree || []);
       setChanges([]);
       setRuntime(null);
       setRuntimeLogs([]);
       setRuntimeProvider(null);
+      setChatMessages([]);
       const first = treeRes.data.tree?.[0]?.path;
       if (first) await openFile(res.data.id, first);
       await loadPreview(res.data.id);
@@ -246,12 +259,51 @@ export default function DeveloperPlatform() {
     }
   };
 
+  const startFromPrompt = async (e) => {
+    e.preventDefault();
+    const prompt = startPrompt.trim();
+    if (!prompt) return;
+    setLoading(true);
+    try {
+      const res = await api.post("/projects/start", { prompt });
+      setStartPrompt("");
+      setProject(res.data.project || null);
+      setChat(res.data.chat || null);
+      setWorkspace(res.data);
+      const treeRes = await api.get(`/workspaces/${res.data.id}/tree`);
+      setTree(treeRes.data.tree || []);
+      const first = treeRes.data.tree?.[0]?.path;
+      if (first) await openFile(res.data.id, first);
+      await loadPreview(res.data.id);
+      const runtimeRes = await api.post(`/workspaces/${res.data.id}/runtime/start`, {
+        install_command: "npm install",
+        dev_command: "npm run dev",
+      });
+      setRuntime(runtimeRes.data);
+      await refreshRuntime(res.data.id);
+      const aiRes = await api.post(`/workspaces/${res.data.id}/ai/chat`, { message: prompt });
+      await refreshWorkspaceFor(res.data.id);
+      if (aiRes.data.changes?.length) toast.success("Workspace created and AI proposal is ready");
+      else toast.success("Workspace created");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Could not start workspace");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const refreshWorkspace = async () => {
     if (!workspace) return;
-    const treeRes = await api.get(`/workspaces/${workspace.id}/tree`);
+    await refreshWorkspaceFor(workspace.id);
+  };
+
+  const refreshWorkspaceFor = async (workspaceId) => {
+    const treeRes = await api.get(`/workspaces/${workspaceId}/tree`);
     setTree(treeRes.data.tree || []);
-    const changesRes = await api.get(`/workspaces/${workspace.id}/changes`);
+    const changesRes = await api.get(`/workspaces/${workspaceId}/changes`);
     setChanges(changesRes.data || []);
+    const chatRes = await api.get(`/workspaces/${workspaceId}/chat`);
+    setChatMessages(chatRes.data.messages || []);
   };
 
   const loadPreview = async (workspaceId) => {
@@ -406,7 +458,7 @@ export default function DeveloperPlatform() {
   return (
     <AdminShell
       title="AI Development Platform"
-      subtitle={workspace ? `${workspace.repo_full_name} · ${workspace.branch}` : "GitHub repos · AI coding workspace"}
+      subtitle={workspace ? `${project?.name || workspace.repo_full_name} · ${chat?.title || workspace.branch}` : "Prompt-first AI workspace"}
       actions={
         <div className="flex gap-2">
           <button onClick={connectGithub} className="btn-outline px-4 py-2 text-xs">
@@ -425,11 +477,26 @@ export default function DeveloperPlatform() {
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)] gap-6 min-h-[560px]">
           <section className="ar-card p-8 flex flex-col justify-between">
             <div>
-              <div className="eyebrow mb-4">Start workspace</div>
-              <h2 className="font-display text-4xl font-black tracking-tighter mb-4">Import a GitHub repository</h2>
+              <div className="eyebrow mb-4">Start with chat</div>
+              <h2 className="font-display text-4xl font-black tracking-tighter mb-4">What do you want to build or change?</h2>
               <p className="text-[color:var(--ar-ink-2)] max-w-2xl leading-7">
-                Choose a repository once. AREVEI will remember it and open directly into the coding workspace, chat, review queue, and runtime controls on future visits.
+                Start from a prompt, or attach a GitHub repository when the AI needs an existing codebase. The workspace, chat context, files, runtime logs, and proposals will persist for this account.
               </p>
+
+              <form onSubmit={startFromPrompt} className="mt-8 max-w-3xl">
+                <textarea
+                  value={startPrompt}
+                  onChange={(e) => setStartPrompt(e.target.value)}
+                  placeholder="Build a landing page for my silver jewellery brand, improve my existing Next.js app, fix a layout bug, add auth..."
+                  className="w-full min-h-[150px] border border-[color:var(--ar-line)] rounded-[8px] bg-white p-4 text-base leading-7 focus:outline-none focus:border-[color:var(--ar-ink)]"
+                />
+                <div className="mt-3 flex items-center gap-3 flex-wrap">
+                  <button disabled={!startPrompt.trim() || loading} className="btn-primary px-5 py-3 text-sm">
+                    <Sparkle size={18} /> Start AI workspace
+                  </button>
+                  <span className="font-mono text-xs text-[color:var(--ar-ink-3)]">GitHub import is optional.</span>
+                </div>
+              </form>
 
               {syncErrors.length > 0 && (
                 <div className="mt-6 border border-[color:var(--ar-error)] bg-red-50 p-4 font-mono text-xs text-red-700">
@@ -438,9 +505,9 @@ export default function DeveloperPlatform() {
                 </div>
               )}
 
-              <div className="mt-8 grid gap-4 max-w-xl">
+              <div className="mt-10 grid gap-4 max-w-xl">
                 <label>
-                  <span className="eyebrow block mb-2">Repository</span>
+                  <span className="eyebrow block mb-2">Optional GitHub repository</span>
                   <select
                     value={selectedRepo}
                     onChange={(e) => setSelectedRepo(e.target.value)}
@@ -603,6 +670,36 @@ export default function DeveloperPlatform() {
                 <PaperPlaneRight size={16} />
               </button>
             </form>
+          </div>
+
+          <div className="border-b border-[color:var(--ar-line)] p-4 max-h-56 overflow-y-auto">
+            <div className="eyebrow mb-3">Chat history</div>
+            {chatMessages.length === 0 ? (
+              <div className="font-mono text-xs text-[color:var(--ar-ink-3)]">
+                No messages yet. Ask the AI to inspect or change this workspace.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {chatMessages.slice(-12).map((message) => (
+                  <div
+                    key={message.id}
+                    className={`p-3 border border-[color:var(--ar-line)] text-xs ${
+                      message.role === "user" ? "bg-white" : "bg-[color:var(--ar-surface)]"
+                    }`}
+                  >
+                    <div className="font-mono text-[10px] uppercase text-[color:var(--ar-ink-3)] mb-1">
+                      {message.role}
+                    </div>
+                    <div className="text-sm leading-5 whitespace-pre-wrap">{message.content}</div>
+                    {message.changed_files?.length > 0 && (
+                      <div className="mt-2 font-mono text-[10px] text-[color:var(--ar-ai)]">
+                        {message.changed_files.join(", ")}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="p-4 border-b border-[color:var(--ar-line)] bg-[color:var(--ar-surface)]">

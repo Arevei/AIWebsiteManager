@@ -456,6 +456,84 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "created_at": now_iso(),
         })
 
+    async def _create_project_chat_workspace(
+        user: dict,
+        repo: dict,
+        branch: str,
+        mode: str,
+        tree: list[dict],
+        git_meta: dict,
+        source: str,
+        initial_prompt: str | None = None,
+    ) -> tuple[dict, dict, dict]:
+        project = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "user_id": user["user_id"],
+            "repo_id": repo["id"],
+            "name": repo.get("name") or "Untitled app",
+            "repo_full_name": repo.get("full_name"),
+            "default_branch": branch,
+            "root_directory": "",
+            "framework": "unknown",
+            "source": source,
+            "status": "active",
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        chat = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "user_id": user["user_id"],
+            "project_id": project["id"],
+            "title": (initial_prompt or f"Work on {project['name']}")[:80],
+            "branch": f"arevei/chat-{new_id()[:8]}",
+            "status": "active",
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        workspace = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "user_id": user["user_id"],
+            "project_id": project["id"],
+            "chat_id": chat["id"],
+            "repo_id": repo["id"],
+            "repo_full_name": repo["full_name"],
+            "branch": branch,
+            "working_branch": chat["branch"],
+            "mode": mode,
+            "status": "loaded",
+            "tree": tree,
+            "index": _manifest_summary([item["path"] for item in tree]),
+            "git": git_meta,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        project["active_chat_id"] = chat["id"]
+        project["active_workspace_id"] = workspace["id"]
+        chat["workspace_id"] = workspace["id"]
+        await db.projects.insert_one(project)
+        await db.project_chats.insert_one(chat)
+        await db.workspace_sessions.insert_one(workspace)
+        await db.developer_states.update_one(
+            {"tenant_id": user["tenant_id"], "user_id": user["user_id"]},
+            {"$set": {
+                "tenant_id": user["tenant_id"],
+                "user_id": user["user_id"],
+                "active_project_id": project["id"],
+                "active_chat_id": chat["id"],
+                "active_workspace_id": workspace["id"],
+                "active_repo_id": repo["id"],
+                "updated_at": now_iso(),
+            }, "$setOnInsert": {"id": new_id(), "created_at": now_iso()}},
+            upsert=True,
+        )
+        project.pop("_id", None)
+        chat.pop("_id", None)
+        workspace.pop("_id", None)
+        return project, chat, workspace
+
     async def _load_real_repo(repo: dict, branch: str) -> tuple[list[dict], dict]:
         token = await _installation_token(repo["installation_id"])
         owner, name = repo["full_name"].split("/", 1)
@@ -709,6 +787,9 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "runtime_sessions",
             "runtime_logs",
             "developer_states",
+            "workspace_chat_messages",
+            "projects",
+            "project_chats",
         ):
             res = await db[coll].delete_many({"tenant_id": tid})
             results[coll] = res.deleted_count
@@ -724,23 +805,16 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             git_meta = {"head_sha": "mock-head", "tree_sha": "mock-tree"}
         else:
             tree, git_meta = await _load_real_repo(repo, branch)
-        paths = [item["path"] for item in tree]
-        workspace = {
-            "id": new_id(),
-            "tenant_id": user["tenant_id"],
-            "user_id": user["user_id"],
-            "repo_id": repo["id"],
-            "repo_full_name": repo["full_name"],
-            "branch": branch,
-            "mode": mode,
-            "status": "loaded",
-            "tree": tree,
-            "index": _manifest_summary(paths),
-            "git": git_meta,
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-        }
-        await db.workspace_sessions.insert_one(workspace)
+        project, chat, workspace = await _create_project_chat_workspace(
+            user=user,
+            repo=repo,
+            branch=branch,
+            mode=mode,
+            tree=tree,
+            git_meta=git_meta,
+            source="github_import",
+            initial_prompt=payload.get("initial_prompt"),
+        )
         if repo.get("provider") == "mock":
             for path, content in MOCK_FILES.items():
                 await _upsert_workspace_file(workspace["id"], path, content, content)
@@ -751,18 +825,31 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                     await _upsert_workspace_file(workspace["id"], fetched["path"], fetched["content"], fetched["content"])
                 except Exception:
                     continue
-        await db.developer_states.update_one(
-            {"tenant_id": user["tenant_id"], "user_id": user["user_id"]},
-            {"$set": {
-                "tenant_id": user["tenant_id"],
-                "user_id": user["user_id"],
-                "active_workspace_id": workspace["id"],
-                "active_repo_id": repo["id"],
-                "updated_at": now_iso(),
-            }, "$setOnInsert": {"id": new_id(), "created_at": now_iso()}},
-            upsert=True,
+        workspace["project"] = project
+        workspace["chat"] = chat
+        return workspace
+
+    @r.post("/projects/start")
+    async def start_project_from_prompt(payload: dict, user=Depends(current_user)):
+        prompt = (payload.get("prompt") or "").strip()
+        if not prompt:
+            raise HTTPException(400, "Prompt is required")
+        repo = await _ensure_mock_repo(user)
+        tree = _mock_tree()
+        project, chat, workspace = await _create_project_chat_workspace(
+            user=user,
+            repo={**repo, "name": payload.get("name") or "AI generated app", "full_name": "arevei/generated-workspace"},
+            branch="main",
+            mode="prompt_first",
+            tree=tree,
+            git_meta={"head_sha": "prompt-start", "tree_sha": "prompt-tree"},
+            source="prompt",
+            initial_prompt=prompt,
         )
-        workspace.pop("_id", None)
+        for path, content in MOCK_FILES.items():
+            await _upsert_workspace_file(workspace["id"], path, content, content)
+        workspace["project"] = project
+        workspace["chat"] = chat
         return workspace
 
     @r.get("/workspaces/current")
@@ -777,12 +864,21 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         )
         if not workspace:
             return {"workspace": None}
+        project = await db.projects.find_one(
+            {"id": workspace.get("project_id"), "tenant_id": user.get("tenant_id")}, {"_id": 0}
+        )
+        chat = await db.project_chats.find_one(
+            {"id": workspace.get("chat_id"), "tenant_id": user.get("tenant_id")}, {"_id": 0}
+        )
         files = await _active_files(workspace["id"])
         loaded = {f["path"] for f in files}
         tree = [{**item, "loaded": item["path"] in loaded} for item in workspace.get("tree", [])]
         changes = await db.ai_change_sets.find(
             {"workspace_id": workspace["id"], "tenant_id": user["tenant_id"]}, {"_id": 0}
         ).sort("created_at", -1).to_list(100)
+        messages = await db.workspace_chat_messages.find(
+            {"workspace_id": workspace["id"], "tenant_id": user["tenant_id"]}, {"_id": 0}
+        ).sort("created_at", 1).to_list(300)
         runtime = await _runtime_session(workspace["id"], user)
         logs = []
         if runtime:
@@ -790,10 +886,13 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 {"runtime_id": runtime["id"]}, {"_id": 0}
             ).sort("created_at", 1).to_list(200)
         return {
+            "project": project,
+            "chat": chat,
             "workspace": workspace,
             "tree": tree,
             "loaded_files": files,
             "changes": changes,
+            "messages": messages,
             "runtime": runtime,
             "runtime_logs": logs,
             "provider": _runtime_provider(),
@@ -958,11 +1057,26 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         message = payload.get("message", "").strip()
         if not message:
             raise HTTPException(400, "Message is required")
+        user_message = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "workspace_id": workspace_id,
+            "project_id": workspace.get("project_id"),
+            "chat_id": workspace.get("chat_id"),
+            "repo_id": workspace["repo_id"],
+            "user_id": user["user_id"],
+            "role": "user",
+            "content": message,
+            "created_at": now_iso(),
+        }
+        await db.workspace_chat_messages.insert_one(user_message)
         assistant_message, diffs = await _build_ai_proposal(workspace, message)
         change = {
             "id": new_id(),
             "tenant_id": user["tenant_id"],
             "workspace_id": workspace_id,
+            "project_id": workspace.get("project_id"),
+            "chat_id": workspace.get("chat_id"),
             "repo_id": workspace["repo_id"],
             "user_id": user["user_id"],
             "prompt": message,
@@ -973,8 +1087,35 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "updated_at": now_iso(),
         }
         await db.ai_change_sets.insert_one(change)
+        assistant_doc = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "workspace_id": workspace_id,
+            "project_id": workspace.get("project_id"),
+            "chat_id": workspace.get("chat_id"),
+            "repo_id": workspace["repo_id"],
+            "user_id": user["user_id"],
+            "role": "assistant",
+            "content": assistant_message,
+            "change_set_id": change["id"],
+            "changed_files": [c.get("path") for c in diffs],
+            "created_at": now_iso(),
+        }
+        await db.workspace_chat_messages.insert_one(assistant_doc)
         change.pop("_id", None)
+        change["messages"] = [
+            {k: v for k, v in user_message.items() if k != "_id"},
+            {k: v for k, v in assistant_doc.items() if k != "_id"},
+        ]
         return change
+
+    @r.get("/workspaces/{workspace_id}/chat")
+    async def workspace_chat_history(workspace_id: str, user=Depends(current_user)):
+        await _workspace(workspace_id, user)
+        messages = await db.workspace_chat_messages.find(
+            {"workspace_id": workspace_id, "tenant_id": user["tenant_id"]}, {"_id": 0}
+        ).sort("created_at", 1).to_list(300)
+        return {"messages": messages}
 
     @r.get("/workspaces/{workspace_id}/changes")
     async def list_workspace_changes(workspace_id: str, user=Depends(current_user)):
