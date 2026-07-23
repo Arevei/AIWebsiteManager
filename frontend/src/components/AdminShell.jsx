@@ -5,7 +5,7 @@ import { ThemeToggle } from "../lib/theme";
 
 const TOP_NAV = [
   { to: "/admin", label: "Overview" },
-  { to: "/admin/dev", label: "Dev Platform" },
+  { to: "/admin/dev", label: "Workspace" },
   { to: "/admin/agent", label: "Agent" },
   { to: "/admin/ai", label: "AI Studio" },
   { to: "/admin/talk", label: "Talk" },
@@ -66,7 +66,7 @@ export default function AdminShell({ children, title, subtitle, actions }) {
       <main className="flex-1 px-6 py-8">{children}</main>
 
       <footer className="border-t border-[color:var(--ar-line)] px-6 py-4 text-xs font-mono text-[color:var(--ar-ink-3)] flex justify-between">
-        <span>AREVEI · Single codebase · Multi-tenant</span>
+        <span>AREVEI / Single codebase / Multi-tenant</span>
         <span>v0.1</span>
       </footer>
     </div>
