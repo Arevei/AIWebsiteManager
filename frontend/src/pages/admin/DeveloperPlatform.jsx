@@ -489,6 +489,7 @@ export default function DeveloperPlatform() {
 
   useEffect(() => {
     loadStartData();
+    handleGithubReturn();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -520,9 +521,68 @@ export default function DeveloperPlatform() {
   const loadRepos = async () => {
     try {
       const res = await api.get("/github/repos");
-      setRepos(res.data.repositories || []);
+      const repositories = res.data.repositories || [];
+      setRepos(repositories);
+      return repositories;
     } catch {
       setRepos([]);
+      return [];
+    }
+  };
+
+  const importRepoDocument = async (repo) => {
+    if (!repo?.id) return;
+    setImportLoading(true);
+    setAgentStatus("Importing repository and indexing workspace...");
+    try {
+      const res = await api.post(`/repos/${repo.id}/load`, {
+        branch: repo.default_branch || "main",
+        mode: "ai_branch",
+      });
+      setImportOpen(false);
+      setWorkspace(res.data);
+      setProject(res.data.project || null);
+      setChat(res.data.chat || null);
+      setScreen("workspace");
+      await api.post(`/workspaces/${res.data.id}/runtime/start`, {
+        root_path: "/home/daytona/project",
+        install_command: "npm install",
+        dev_command: "npm run dev",
+      });
+      await refreshWorkspace(res.data.id);
+      await loadRecentWorkspaces();
+      toast.success(`Loaded ${repo.full_name}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Repository import failed");
+      setImportOpen(true);
+    } finally {
+      setAgentStatus("");
+      setImportLoading(false);
+    }
+  };
+
+  const handleGithubReturn = async () => {
+    const params = new URLSearchParams(window.location.search);
+    const installationId = params.get("installation_id");
+    if (!installationId) return;
+    setImportOpen(true);
+    setImportLoading(true);
+    setAgentStatus("Finishing GitHub connection and loading repositories...");
+    try {
+      await api.get(`/github/install/callback${window.location.search}`);
+      const repositories = await loadRepos();
+      window.history.replaceState({}, "", window.location.pathname);
+      const repoToLoad = repositories[0];
+      if (repoToLoad) {
+        await importRepoDocument(repoToLoad);
+      } else {
+        toast.error("GitHub connected, but no repositories were returned. Check GitHub App repository access.");
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "GitHub callback failed");
+    } finally {
+      setAgentStatus("");
+      setImportLoading(false);
     }
   };
 
@@ -688,32 +748,8 @@ export default function DeveloperPlatform() {
 
   const importRepo = async (repoId) => {
     if (!repoId) return;
-    setImportLoading(true);
-    setAgentStatus("Importing repository and indexing workspace...");
-    try {
-      const repo = repos.find((item) => item.id === repoId);
-      const res = await api.post(`/repos/${repoId}/load`, {
-        branch: repo?.default_branch || "main",
-        mode: "ai_branch",
-      });
-      setImportOpen(false);
-      setWorkspace(res.data);
-      setProject(res.data.project || null);
-      setChat(res.data.chat || null);
-      setScreen("workspace");
-      await api.post(`/workspaces/${res.data.id}/runtime/start`, {
-        root_path: "/home/daytona/project",
-        install_command: "npm install",
-        dev_command: "npm run dev",
-      });
-      await refreshWorkspace(res.data.id);
-      await loadRecentWorkspaces();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Repository import failed");
-    } finally {
-      setAgentStatus("");
-      setImportLoading(false);
-    }
+    const repo = repos.find((item) => item.id === repoId);
+    await importRepoDocument(repo || { id: repoId, default_branch: "main", full_name: "selected repository" });
   };
 
   const attachDaytonaSandbox = async () => {
