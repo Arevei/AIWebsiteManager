@@ -30,6 +30,7 @@ from models import new_id, now_iso
 GITHUB_API = "https://api.github.com"
 MAX_INDEX_FILES = 120
 MAX_FILE_BYTES = 180_000
+MAX_TREE_FILES = 5000
 
 
 MOCK_FILES = {
@@ -882,6 +883,16 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         )
         _daytona_exec(sandbox, command, timeout=300)
 
+    def _daytona_remove_workspace_folder(runtime: dict):
+        sandbox_id = runtime.get("provider_runtime_id")
+        if not sandbox_id:
+            return
+        root = _remote_workspace_root(runtime)
+        if not root.startswith("/home/daytona/workspaces/"):
+            raise RuntimeError(f"Refusing to delete unsafe Daytona path: {root}")
+        sandbox = _daytona_start_sandbox(_daytona_client().get(sandbox_id))
+        _daytona_exec(sandbox, f"rm -rf {shlex.quote(root)}", timeout=120)
+
     def _daytona_create_and_sync(runtime: dict, files: list[dict], sandbox_id: str | None = None, repo: dict | None = None, token: str | None = None) -> dict:
         daytona = _daytona_client()
         sandbox = None
@@ -1105,7 +1116,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         important = set(_initial_context_paths([item["path"] for item in blobs]))
         files = [item for item in blobs if item["path"] in important]
         files.extend(item for item in blobs if item["path"] not in important)
-        files = files[:MAX_INDEX_FILES]
+        files = files[:MAX_TREE_FILES]
         return files, {"head_sha": sha, "tree_sha": tree.get("sha")}
 
     async def _fetch_real_file(repo: dict, path: str, branch: str) -> dict:
@@ -1235,6 +1246,9 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         if not command:
             return None
         files = await _active_files(workspace["id"])
+        repo = await _repo(workspace["repo_id"], user)
+        repo_token = await _installation_token(repo["installation_id"]) if repo.get("provider") == "github" else None
+        _daytona_sync_files(runtime, files, repo=repo, token=repo_token)
         await _append_workspace_activity(workspace, f"Agent selected runtime command `{command}` from project configuration.")
         result = _daytona_run_command(runtime, files, command)
         updates = {
@@ -1662,10 +1676,10 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         runtime = await _runtime_session(workspace_id, user)
         if runtime and runtime.get("provider") == "daytona" and runtime.get("provider_runtime_id"):
             try:
-                sandbox = _daytona_client().get(runtime["provider_runtime_id"])
-                sandbox.stop(timeout=60)
-            except Exception:
-                pass
+                _daytona_remove_workspace_folder(runtime)
+                await _append_runtime_log(runtime["id"], f"Removed Daytona project folder {_remote_workspace_root(runtime)} after workspace delete.")
+            except Exception as exc:
+                await _append_runtime_log(runtime["id"], f"Daytona project folder cleanup failed: {str(exc)[:240]}", "warning")
         await db.workspace_files.delete_many({"workspace_id": workspace_id})
         await db.workspace_knowledge.delete_many({"workspace_id": workspace_id, "tenant_id": user["tenant_id"]})
         await db.ai_change_sets.delete_many({"workspace_id": workspace_id, "tenant_id": user["tenant_id"]})
@@ -2142,6 +2156,8 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 await _append_workspace_activity(workspace, msg)
                 raise HTTPException(400, msg)
             try:
+                synced = _daytona_sync_files(runtime, files, repo=repo, token=repo_token)
+                await _append_runtime_log(runtime["id"], f"Prepared full Git checkout and synced {synced} loaded/edited file(s) before `{command}`.")
                 result = _daytona_run_command(runtime, files, command)
             except Exception as exc:
                 if _is_daytona_shell_error(exc):

@@ -34,18 +34,11 @@ import {
   UploadSimple,
   X,
 } from "@phosphor-icons/react";
-import { API, api, getToken } from "../../lib/api";
+import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 
 function encodePath(path) {
   return path.split("/").map(encodeURIComponent).join("/");
-}
-
-function workspacePreviewSrc(workspace) {
-  if (!workspace?.id) return "";
-  const token = getToken();
-  const auth = token ? `?arevei_token=${encodeURIComponent(token)}` : "";
-  return `${API}/workspaces/${workspace.id}/runtime/preview-proxy${auth}`;
 }
 
 function shortName(value, max = 34) {
@@ -1224,7 +1217,7 @@ export default function DeveloperPlatform() {
               <div className={cx("min-h-0 flex-1", p.codeBg)}>
                 {rightView === "preview" ? (
                   runtime?.preview_url ? (
-                    <iframe title="Live preview" src={workspacePreviewSrc(workspace)} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
+                    <iframe title="Live preview" src={runtime.preview_url} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
                   ) : runtime && ["preview_ready", "command_succeeded", "ready", "bridge_error"].includes(runtime.status) ? (
                     <div className="flex h-full items-center justify-center p-6">
                       <div className={cx("w-full max-w-xl rounded-lg border p-5", p.panel)}>
