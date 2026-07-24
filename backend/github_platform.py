@@ -127,11 +127,19 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         return res.json()
 
     async def _installation_token(installation_id: int | str) -> str:
-        data = _gh_request(
-            "POST",
-            f"/app/installations/{installation_id}/access_tokens",
-            token=_github_app_jwt(),
-        )
+        try:
+            data = _gh_request(
+                "POST",
+                f"/app/installations/{installation_id}/access_tokens",
+                token=_github_app_jwt(),
+            )
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                raise HTTPException(
+                    404,
+                    "GitHub installation was not found for the configured GitHub App. Reconnect GitHub, or verify GITHUB_APP_ID and GITHUB_PRIVATE_KEY belong to the same installed app.",
+                )
+            raise
         return data["token"]
 
     async def _tenant_id(user: dict) -> str:
@@ -959,25 +967,86 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             sandbox.fs.upload_file((f.get("content") or "").encode("utf-8"), remote_path)
         return len(files)
 
+    def _daytona_exec_output(response: Any) -> str:
+        artifacts = getattr(response, "artifacts", None)
+        stdout = getattr(artifacts, "stdout", None) if artifacts else None
+        stderr = getattr(artifacts, "stderr", None) if artifacts else None
+        result = getattr(response, "result", None)
+        return "\n".join(part for part in (stdout, stderr, result) if part)[:8000]
+
+    def _daytona_dev_log(sandbox: Any) -> str:
+        try:
+            response = _daytona_exec(sandbox, "tail -n 160 /tmp/arevei-dev.log 2>/dev/null || true", timeout=20)
+            return _daytona_exec_output(response)
+        except Exception as exc:
+            return f"Could not read dev server log: {str(exc)[:240]}"
+
+    def _daytona_wait_for_http(sandbox: Any, port: int, timeout_seconds: int = 120) -> tuple[bool, str]:
+        deadline = time.time() + timeout_seconds
+        last_output = ""
+        while time.time() < deadline:
+            try:
+                response = _daytona_exec(
+                    sandbox,
+                    f"curl -fsS --max-time 5 http://127.0.0.1:{port}/ >/dev/null",
+                    timeout=10,
+                )
+                exit_code = getattr(response, "exit_code", None)
+                last_output = _daytona_exec_output(response)
+                if exit_code in (0, None):
+                    return True, last_output
+            except Exception as exc:
+                last_output = str(exc)
+            time.sleep(2)
+        return False, last_output
+
     def _daytona_run_command(runtime: dict, files: list[dict], command: str) -> dict:
         sandbox_id = runtime.get("provider_runtime_id")
         if not sandbox_id:
             raise RuntimeError("Runtime has no Daytona sandbox id")
         sandbox = _daytona_start_sandbox(_daytona_client().get(sandbox_id))
         root = _remote_workspace_root(runtime)
-        is_dev_server = any(token in command for token in ("npm run dev", "yarn dev", "pnpm dev", "next dev", "vite"))
+        is_dev_server = any(token in command for token in (
+            "npm run dev",
+            "npm run start",
+            "npm start",
+            "yarn dev",
+            "yarn start",
+            "pnpm dev",
+            "pnpm start",
+            "next dev",
+            "vite",
+            "react-scripts start",
+        ))
         if is_dev_server:
             port = _infer_preview_port(files, command)
             dev_command = _host_bound_dev_command(files, command, port)
-            _daytona_exec(sandbox, f"nohup /bin/sh -lc {shlex.quote(dev_command)} > /tmp/arevei-dev.log 2>&1 &", cwd=root, timeout=30)
-            time.sleep(2)
+            _daytona_exec(
+                sandbox,
+                f"rm -f /tmp/arevei-dev.log; (lsof -ti:{port} 2>/dev/null | xargs -r kill 2>/dev/null || true); nohup /bin/sh -lc {shlex.quote(dev_command)} > /tmp/arevei-dev.log 2>&1 &",
+                cwd=root,
+                timeout=30,
+            )
+            ready, probe_output = _daytona_wait_for_http(sandbox, port)
+            log_tail = _daytona_dev_log(sandbox)
+            if not ready:
+                return {
+                    "status": "command_failed",
+                    "output": (
+                        f"Started `{dev_command}` on Daytona sandbox {sandbox_id}, but port {port} did not become ready within 120 seconds.\n\n"
+                        f"Probe output:\n{probe_output or '(none)'}\n\n"
+                        f"Dev server log:\n{log_tail or '(empty)'}"
+                    ),
+                    "exit_code": 1,
+                    "preview_port": port,
+                }
             try:
                 preview_link = sandbox.create_signed_preview_url(port, expires_in_seconds=60 * 60 * 24)
             except Exception:
                 preview_link = sandbox.get_preview_link(port)
             return {
                 "status": "preview_ready",
-                "output": f"Started `{dev_command}` on Daytona sandbox {sandbox_id}.",
+                "output": f"Started `{dev_command}` on Daytona sandbox {sandbox_id}. Port {port} is responding.\n\nDev server log:\n{log_tail}",
                 "preview_url": _preview_url_value(preview_link),
                 "preview_port": port,
             }
@@ -1365,9 +1434,11 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                     detail = str(e.detail)
                     if e.status_code == 404:
                         detail = (
-                            "GitHub installation token lookup returned 404. Check that GITHUB_APP_ID "
-                            "and GITHUB_PRIVATE_KEY belong to the exact GitHub App you just installed, "
-                            "then restart the backend."
+                            "This saved GitHub installation is stale or belongs to a different GitHub App. "
+                            "Reconnect GitHub from the import modal."
+                        )
+                        await db.repositories.delete_many(
+                            {"tenant_id": tid, "installation_id": inst.get("installation_id")}
                         )
                     sync_errors.append({
                         "installation_id": inst.get("installation_id"),
@@ -1377,7 +1448,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                     })
                     await db.github_installations.update_one(
                         {"tenant_id": tid, "installation_id": inst.get("installation_id")},
-                        {"$set": {"status": "sync_error", "last_error": detail, "updated_at": now_iso()}},
+                        {"$set": {"status": "stale" if e.status_code == 404 else "sync_error", "last_error": detail, "updated_at": now_iso()}},
                     )
                     continue
                 for repo_data in data.get("repositories", []):

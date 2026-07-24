@@ -873,11 +873,12 @@ export default function DeveloperPlatform() {
     setLoading(true);
     setAgentStatus(`Running ${command}...`);
     try {
-      await api.post(`/workspaces/${workspace.id}/runtime/commands`, { command });
+      const res = await api.post(`/workspaces/${workspace.id}/runtime/commands`, { command });
       await refreshWorkspace(workspace.id);
-      setRightView("logs");
+      setRightView(res.data?.status === "preview_ready" ? "preview" : "logs");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Command failed");
+      setRightView("logs");
     } finally {
       setAgentStatus("");
       setLoading(false);
