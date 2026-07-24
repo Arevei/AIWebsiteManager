@@ -34,11 +34,18 @@ import {
   UploadSimple,
   X,
 } from "@phosphor-icons/react";
-import { api } from "../../lib/api";
+import { API, api, getToken } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 
 function encodePath(path) {
   return path.split("/").map(encodeURIComponent).join("/");
+}
+
+function workspacePreviewSrc(workspace) {
+  if (!workspace?.id) return "";
+  const token = getToken();
+  const auth = token ? `?arevei_token=${encodeURIComponent(token)}` : "";
+  return `${API}/workspaces/${workspace.id}/runtime/preview-proxy${auth}`;
 }
 
 function shortName(value, max = 34) {
@@ -530,6 +537,26 @@ export default function DeveloperPlatform() {
     }
   };
 
+  const autoSetupWorkspace = async (workspaceDoc) => {
+    const config = workspaceDoc?.runtime_config || {};
+    setAgentStatus("Starting persistent Daytona workspace...");
+    await api.post(`/workspaces/${workspaceDoc.id}/runtime/start`, {
+      install_command: config.install_command,
+      dev_command: config.dev_command,
+      build_command: config.build_command,
+      test_command: config.test_command,
+      lint_command: config.lint_command,
+    });
+    if (config.install_command) {
+      setAgentStatus(`Installing dependencies with ${config.install_command}...`);
+      await api.post(`/workspaces/${workspaceDoc.id}/runtime/commands`, { command: config.install_command });
+    }
+    if (config.dev_command) {
+      setAgentStatus(`Starting preview with ${config.dev_command}...`);
+      await api.post(`/workspaces/${workspaceDoc.id}/runtime/commands`, { command: config.dev_command });
+    }
+  };
+
   const importRepoDocument = async (repo) => {
     if (!repo?.id) return;
     setImportLoading(true);
@@ -544,11 +571,7 @@ export default function DeveloperPlatform() {
       setProject(res.data.project || null);
       setChat(res.data.chat || null);
       setScreen("workspace");
-      await api.post(`/workspaces/${res.data.id}/runtime/start`, {
-        root_path: "/home/daytona/project",
-        install_command: "npm install",
-        dev_command: "npm run dev",
-      });
+      await autoSetupWorkspace(res.data);
       await refreshWorkspace(res.data.id);
       await loadRecentWorkspaces();
       toast.success(`Loaded ${repo.full_name}`);
@@ -678,11 +701,7 @@ export default function DeveloperPlatform() {
     setProject(res.data.project || null);
     setChat(res.data.chat || null);
     setScreen("workspace");
-    await api.post(`/workspaces/${res.data.id}/runtime/start`, {
-      root_path: "/home/daytona/project",
-      install_command: "npm install",
-      dev_command: "npm run dev",
-    });
+    await autoSetupWorkspace(res.data);
     setAgentStatus("Reading files and preparing first code proposal...");
     await api.post(`/workspaces/${res.data.id}/ai/chat`, { message });
     await refreshWorkspace(res.data.id);
@@ -759,9 +778,11 @@ export default function DeveloperPlatform() {
     try {
       await api.post(`/workspaces/${workspace.id}/runtime/start`, {
         provider_runtime_id: sandboxId.trim(),
-        root_path: "/home/daytona/project",
         install_command: runtime?.install_command || "npm install",
         dev_command: runtime?.dev_command || "npm run dev",
+        build_command: runtime?.build_command,
+        test_command: runtime?.test_command,
+        lint_command: runtime?.lint_command,
       });
       await refreshWorkspace(workspace.id);
       toast.success("Daytona sandbox attached");
@@ -1190,9 +1211,9 @@ export default function DeveloperPlatform() {
                   <button onClick={() => runCommand(runtime?.dev_command || "npm run dev")} className={cx("flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>
                     <Play size={16} /> Run dev
                   </button>
-                  <button onClick={() => runCommand("npm test -- --watch=false")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Test</button>
-                  <button onClick={() => runCommand("npm run build")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Build</button>
-                  <button onClick={() => runCommand("npm run lint")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Debug</button>
+                  <button onClick={() => runCommand(runtime?.test_command || "npm test -- --watch=false")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Test</button>
+                  <button onClick={() => runCommand(runtime?.build_command || "npm run build")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Build</button>
+                  <button onClick={() => runCommand(runtime?.lint_command || "npm run lint")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Debug</button>
                   <button onClick={stopRuntime} disabled={!runtime || runtime.status === "stopped"} className={cx("flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm disabled:opacity-40", p.inverseButton)}>
                     <Power size={16} /> Stop
                   </button>
@@ -1203,7 +1224,7 @@ export default function DeveloperPlatform() {
               <div className={cx("min-h-0 flex-1", p.codeBg)}>
                 {rightView === "preview" ? (
                   runtime?.preview_url ? (
-                    <iframe title="Live preview" src={runtime.preview_url} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
+                    <iframe title="Live preview" src={workspacePreviewSrc(workspace)} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
                   ) : runtime && ["preview_ready", "command_succeeded", "ready", "bridge_error"].includes(runtime.status) ? (
                     <div className="flex h-full items-center justify-center p-6">
                       <div className={cx("w-full max-w-xl rounded-lg border p-5", p.panel)}>

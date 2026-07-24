@@ -17,14 +17,14 @@ import re
 import shlex
 import time
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, parse_qs, urlencode, urlsplit, urlunsplit
 
 import jwt
 import requests
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from auth import current_user
+from auth import current_user, decode_token
 from models import new_id, now_iso
 
 GITHUB_API = "https://api.github.com"
@@ -237,6 +237,82 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             ],
             "important_files": [p for p in paths if p in {"package.json", "requirements.txt", "README.md", "pyproject.toml"}],
             "package_manager": package_manager,
+        }
+
+    def _initial_context_paths(paths: list[str]) -> list[str]:
+        important = {
+            "package.json",
+            "pnpm-lock.yaml",
+            "yarn.lock",
+            "bun.lock",
+            "bun.lockb",
+            "package-lock.json",
+            "README.md",
+            "tsconfig.json",
+            "jsconfig.json",
+            "next.config.js",
+            "next.config.mjs",
+            "next.config.ts",
+            "vite.config.js",
+            "vite.config.ts",
+            "postcss.config.js",
+            "tailwind.config.js",
+            "tailwind.config.ts",
+            ".env.example",
+            "src/App.jsx",
+            "src/App.tsx",
+            "src/main.jsx",
+            "src/main.tsx",
+            "app/page.tsx",
+            "app/page.jsx",
+            "pages/index.tsx",
+            "pages/index.jsx",
+        }
+        selected = [path for path in paths if path in important]
+        selected.extend(path for path in paths if path.startswith("src/") and path.endswith((".jsx", ".tsx")) and path not in selected)
+        return selected[:18]
+
+    def _runtime_commands(paths: list[str], package_json: str | None = None) -> dict:
+        package_manager = _manifest_summary(paths)["package_manager"]
+        scripts = {}
+        if package_json:
+            try:
+                scripts = json.loads(package_json).get("scripts", {}) or {}
+            except Exception:
+                scripts = {}
+        runner = {
+            "pnpm": "pnpm",
+            "yarn": "yarn",
+            "bun": "bun",
+            "npm": "npm run",
+        }.get(package_manager, "npm run")
+        install = {
+            "pnpm": "pnpm install",
+            "yarn": "yarn install",
+            "bun": "bun install",
+            "npm": "npm install",
+        }.get(package_manager, "npm install")
+
+        def script(name: str, fallback: str) -> str:
+            if name in scripts:
+                return f"{runner} {name}" if package_manager == "npm" else f"{package_manager} {name}"
+            return fallback
+
+        if "dev" in scripts:
+            dev = script("dev", "npm run dev")
+        elif "next" in (package_json or "").lower():
+            dev = "npx next dev -H 0.0.0.0"
+        elif "vite" in (package_json or "").lower():
+            dev = "npx vite --host 0.0.0.0"
+        else:
+            dev = script("start", "npm run dev")
+        return {
+            "package_manager": package_manager,
+            "install_command": install,
+            "dev_command": dev,
+            "build_command": script("build", "npm run build"),
+            "test_command": script("test", "npm test -- --watch=false"),
+            "lint_command": script("lint", "npm run lint"),
         }
 
     def _route_for_path(path: str) -> str | None:
@@ -650,8 +726,8 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
 
     def _daytona_workspace_labels(runtime: dict) -> dict[str, str]:
         return {
-            "arevei": "workspace",
-            "arevei_workspace_id": str(runtime.get("workspace_id") or ""),
+            "arevei": "user-workspace",
+            "arevei_user_id": str(runtime.get("user_id") or ""),
             "arevei_tenant_id": str(runtime.get("tenant_id") or ""),
         }
 
@@ -670,10 +746,11 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         return url
 
     def _remote_workspace_root(runtime: dict) -> str:
-        root = os.environ.get("DAYTONA_WORKSPACE_ROOT") or runtime.get("root_path") or "/home/daytona/project"
+        default_root = f"/home/daytona/workspaces/{runtime.get('workspace_id') or 'project'}"
+        root = os.environ.get("DAYTONA_WORKSPACE_ROOT") or runtime.get("root_path") or default_root
         root = root.replace("\\", "/")
         if root.startswith("/workspace"):
-            root = "/home/daytona/project"
+            root = default_root
         if not root.startswith("/"):
             root = f"/{root}"
         return posixpath.normpath(root)
@@ -695,6 +772,22 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         if "next" in package.lower():
             return 3000
         return 3000
+
+    def _host_bound_dev_command(files: list[dict], command: str, port: int) -> str:
+        package = next((f.get("content", "") for f in files if f.get("path") == "package.json"), "")
+        package_lower = package.lower()
+        command_lower = command.lower()
+        if "--host" in command_lower or "0.0.0.0" in command_lower:
+            return command
+        if "vite" in package_lower:
+            if re.search(r"\b(npm|pnpm|yarn)\s+run\s+dev\b", command):
+                return f"{command} -- --host 0.0.0.0 --port {port}"
+            return f"{command} --host 0.0.0.0 --port {port}"
+        if "next" in package_lower and "-h" not in command_lower and "--hostname" not in command_lower:
+            if re.search(r"\b(npm|pnpm|yarn)\s+run\s+dev\b", command):
+                return f"{command} -- -H 0.0.0.0 -p {port}"
+            return f"{command} -H 0.0.0.0 -p {port}"
+        return f"HOST=0.0.0.0 PORT={port} {command}"
 
     def _daytona_sandbox_state(sandbox: Any) -> str:
         state = getattr(sandbox, "state", "")
@@ -755,7 +848,32 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         message = str(exc).lower()
         return "zsh" in message and ("no such file" in message or "fork/exec" in message)
 
-    def _daytona_create_and_sync(runtime: dict, files: list[dict], sandbox_id: str | None = None) -> dict:
+    def _daytona_prepare_git_checkout(sandbox: Any, runtime: dict, repo: dict | None, token: str | None = None):
+        root = _remote_workspace_root(runtime)
+        if not repo or repo.get("provider") == "mock":
+            _daytona_exec(sandbox, f"mkdir -p {shlex.quote(root)}", timeout=60)
+            return
+        branch = runtime.get("branch") or repo.get("default_branch") or "main"
+        full_name = repo.get("full_name")
+        if not full_name:
+            _daytona_exec(sandbox, f"mkdir -p {shlex.quote(root)}", timeout=60)
+            return
+        auth = f"-c http.extraHeader={shlex.quote('AUTHORIZATION: bearer ' + token)} " if token else ""
+        repo_url = f"https://github.com/{full_name}.git"
+        command = (
+            f"mkdir -p {shlex.quote(posixpath.dirname(root))} && "
+            f"if [ -d {shlex.quote(root)}/.git ]; then "
+            f"git -C {shlex.quote(root)} {auth}fetch origin {shlex.quote(branch)} && "
+            f"git -C {shlex.quote(root)} checkout {shlex.quote(branch)} && "
+            f"git -C {shlex.quote(root)} reset --hard FETCH_HEAD; "
+            f"else "
+            f"rm -rf {shlex.quote(root)} && "
+            f"git {auth}clone --depth 1 --branch {shlex.quote(branch)} {shlex.quote(repo_url)} {shlex.quote(root)}; "
+            f"fi"
+        )
+        _daytona_exec(sandbox, command, timeout=300)
+
+    def _daytona_create_and_sync(runtime: dict, files: list[dict], sandbox_id: str | None = None, repo: dict | None = None, token: str | None = None) -> dict:
         daytona = _daytona_client()
         sandbox = None
         requested_id = (sandbox_id or runtime.get("provider_runtime_id") or "").strip()
@@ -779,6 +897,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 sandbox = daytona.create()
         sandbox = _daytona_start_sandbox(sandbox)
         root = _remote_workspace_root(runtime)
+        _daytona_prepare_git_checkout(sandbox, runtime, repo, token)
         _daytona_exec(sandbox, f"mkdir -p {shlex.quote(root)}", timeout=60)
         for f in files:
             remote_path = _remote_file_path(runtime, f["path"])
@@ -787,12 +906,13 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             sandbox.fs.upload_file((f.get("content") or "").encode("utf-8"), remote_path)
         return {"sandbox_id": sandbox.id, "root_path": root, "reused": reused}
 
-    def _daytona_sync_files(runtime: dict, files: list[dict]) -> int:
+    def _daytona_sync_files(runtime: dict, files: list[dict], repo: dict | None = None, token: str | None = None) -> int:
         sandbox_id = runtime.get("provider_runtime_id")
         if not sandbox_id:
             raise RuntimeError("Runtime has no Daytona sandbox id")
         sandbox = _daytona_start_sandbox(_daytona_client().get(sandbox_id))
         root = _remote_workspace_root(runtime)
+        _daytona_prepare_git_checkout(sandbox, runtime, repo, token)
         _daytona_exec(sandbox, f"mkdir -p {shlex.quote(root)}", timeout=60)
         for f in files:
             remote_path = _remote_file_path(runtime, f["path"])
@@ -810,7 +930,8 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         is_dev_server = any(token in command for token in ("npm run dev", "yarn dev", "pnpm dev", "next dev", "vite"))
         if is_dev_server:
             port = _infer_preview_port(files, command)
-            _daytona_exec(sandbox, f"nohup /bin/sh -lc {shlex.quote(command)} > /tmp/arevei-dev.log 2>&1 &", cwd=root, timeout=30)
+            dev_command = _host_bound_dev_command(files, command, port)
+            _daytona_exec(sandbox, f"nohup /bin/sh -lc {shlex.quote(dev_command)} > /tmp/arevei-dev.log 2>&1 &", cwd=root, timeout=30)
             time.sleep(2)
             try:
                 preview_link = sandbox.create_signed_preview_url(port, expires_in_seconds=60 * 60 * 24)
@@ -818,7 +939,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 preview_link = sandbox.get_preview_link(port)
             return {
                 "status": "preview_ready",
-                "output": f"Started `{command}` on Daytona sandbox {sandbox_id}.",
+                "output": f"Started `{dev_command}` on Daytona sandbox {sandbox_id}.",
                 "preview_url": _preview_url_value(preview_link),
                 "preview_port": port,
             }
@@ -844,6 +965,9 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             return runtime
 
         files = await _active_files(workspace_id)
+        workspace = await db.workspace_sessions.find_one({"id": workspace_id}, {"_id": 0}) or {}
+        repo = await db.repositories.find_one({"id": workspace.get("repo_id") or runtime.get("repo_id")}, {"_id": 0})
+        token = await _installation_token(repo["installation_id"]) if repo and repo.get("provider") == "github" else None
         updates: dict[str, Any] = {
             "provider": provider["provider"],
             "provider_configured": provider["configured"],
@@ -854,7 +978,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         if needs_daytona_sandbox:
             upgraded = {**runtime, **updates}
             try:
-                bridge = _daytona_create_and_sync(upgraded, files)
+                bridge = _daytona_create_and_sync(upgraded, files, repo=repo, token=token)
                 updates.update({
                     "provider_runtime_id": bridge["sandbox_id"],
                     "root_path": bridge["root_path"],
@@ -1063,6 +1187,41 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         diffs.append(_make_diff(target_path, current, new))
         return f"I prepared a safe proposal touching {target_path}.", diffs
 
+    async def _run_agent_runtime_intent(workspace: dict, message: str, user: dict) -> str | None:
+        lower = message.lower()
+        runtime = await _runtime_session(workspace["id"], user)
+        if not runtime or runtime.get("provider") != "daytona" or not runtime.get("capabilities", {}).get("commands"):
+            return None
+        command = None
+        if "install" in lower:
+            command = runtime.get("install_command")
+        elif "run dev" in lower or "start dev" in lower or "preview" in lower:
+            command = runtime.get("dev_command")
+        elif "build" in lower:
+            command = runtime.get("build_command")
+        elif "test" in lower:
+            command = runtime.get("test_command")
+        elif "lint" in lower or "debug" in lower:
+            command = runtime.get("lint_command")
+        if not command:
+            return None
+        files = await _active_files(workspace["id"])
+        await _append_workspace_activity(workspace, f"Agent selected runtime command `{command}` from project configuration.")
+        result = _daytona_run_command(runtime, files, command)
+        updates = {
+            "status": result["status"],
+            "last_command": command,
+            "last_exit_code": result.get("exit_code"),
+            "updated_at": now_iso(),
+        }
+        if result.get("preview_url"):
+            updates["preview_url"] = result["preview_url"]
+            updates["preview_port"] = result.get("preview_port")
+        await db.runtime_sessions.update_one({"id": runtime["id"]}, {"$set": updates})
+        await _append_runtime_log(runtime["id"], result.get("output", "Command completed."))
+        await _append_workspace_activity(workspace, result.get("output", "Command completed."))
+        return result.get("output")
+
     @r.get("/github/install/start")
     async def github_install_start(user=Depends(current_user)):
         tid = await _tenant_id(user)
@@ -1239,12 +1398,21 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             for path, content in MOCK_FILES.items():
                 await _upsert_workspace_file(workspace["id"], path, content, content)
         else:
-            for item in tree[:25]:
+            initial_paths = _initial_context_paths([item["path"] for item in tree])
+            for item in [entry for entry in tree if entry["path"] in initial_paths]:
                 try:
                     fetched = await _fetch_real_file(repo, item["path"], branch)
                     await _upsert_workspace_file(workspace["id"], fetched["path"], fetched["content"], fetched["content"])
                 except Exception:
                     continue
+        active_files = await _active_files(workspace["id"])
+        package_json = next((f.get("content") for f in active_files if f.get("path") == "package.json"), None)
+        runtime_config = _runtime_commands([item["path"] for item in tree], package_json)
+        await db.workspace_sessions.update_one(
+            {"id": workspace["id"]},
+            {"$set": {"runtime_config": runtime_config, "updated_at": now_iso()}},
+        )
+        workspace["runtime_config"] = runtime_config
         await _refresh_workspace_knowledge(workspace["id"])
         workspace["project"] = project
         workspace["chat"] = chat
@@ -1269,6 +1437,14 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         )
         for path, content in MOCK_FILES.items():
             await _upsert_workspace_file(workspace["id"], path, content, content)
+        active_files = await _active_files(workspace["id"])
+        package_json = next((f.get("content") for f in active_files if f.get("path") == "package.json"), None)
+        runtime_config = _runtime_commands([item["path"] for item in tree], package_json)
+        await db.workspace_sessions.update_one(
+            {"id": workspace["id"]},
+            {"$set": {"runtime_config": runtime_config, "updated_at": now_iso()}},
+        )
+        workspace["runtime_config"] = runtime_config
         await _refresh_workspace_knowledge(workspace["id"])
         workspace["project"] = project
         workspace["chat"] = chat
@@ -1537,9 +1713,11 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
     async def start_workspace_runtime(workspace_id: str, payload: dict, user=Depends(current_user)):
         workspace = await _workspace(workspace_id, user)
         repo = await _repo(workspace["repo_id"], user)
+        repo_token = await _installation_token(repo["installation_id"]) if repo.get("provider") == "github" else None
         provider = _runtime_provider()
         files = await _active_files(workspace_id)
         existing = await _runtime_session(workspace_id, user)
+        runtime_config = workspace.get("runtime_config") or _runtime_commands([item["path"] for item in workspace.get("tree", [])])
         if existing:
             supplied_runtime_id = (
                 payload.get("provider_runtime_id")
@@ -1551,7 +1729,13 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 "provider_configured": provider["configured"],
                 "capabilities": provider["capabilities"],
                 "setup_hint": provider["setup_hint"],
-                "root_path": payload.get("root_path") or existing.get("root_path") or "/home/daytona/project",
+                "root_path": payload.get("root_path") or existing.get("root_path") or f"/home/daytona/workspaces/{workspace_id}",
+                "install_command": payload.get("install_command") or existing.get("install_command") or runtime_config["install_command"],
+                "dev_command": payload.get("dev_command") or existing.get("dev_command") or runtime_config["dev_command"],
+                "build_command": payload.get("build_command") or existing.get("build_command") or runtime_config["build_command"],
+                "test_command": payload.get("test_command") or existing.get("test_command") or runtime_config["test_command"],
+                "lint_command": payload.get("lint_command") or existing.get("lint_command") or runtime_config["lint_command"],
+                "package_manager": existing.get("package_manager") or runtime_config["package_manager"],
                 "updated_at": now_iso(),
             }
             if supplied_runtime_id:
@@ -1563,7 +1747,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 })
                 existing.update(updates)
                 try:
-                    synced = _daytona_sync_files(existing, files)
+                    synced = _daytona_sync_files(existing, files, repo=repo, token=repo_token)
                     updates["files_synced"] = synced
                     await _append_runtime_log(existing["id"], f"Attached Daytona sandbox {updates['provider_runtime_id']} and synced {synced} file(s).")
                 except Exception as exc:
@@ -1576,7 +1760,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             if provider["provider"] == "daytona" and provider["capabilities"]["commands"] and active_sandbox_id and not supplied_runtime_id:
                 upgraded = {**existing, **updates, "provider_runtime_id": active_sandbox_id}
                 try:
-                    synced = _daytona_sync_files(upgraded, files)
+                    synced = _daytona_sync_files(upgraded, files, repo=repo, token=repo_token)
                     updates.update({
                         "provider_runtime_id": active_sandbox_id,
                         "files_synced": synced,
@@ -1590,7 +1774,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                         try:
                             replacement = {**upgraded}
                             replacement.pop("provider_runtime_id", None)
-                            bridge = _daytona_create_and_sync(replacement, files)
+                            bridge = _daytona_create_and_sync(replacement, files, repo=repo, token=repo_token)
                             updates.update({
                                 "provider_runtime_id": bridge["sandbox_id"],
                                 "root_path": bridge["root_path"],
@@ -1615,7 +1799,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             if provider["provider"] == "daytona" and provider["capabilities"]["commands"] and not active_sandbox_id:
                 upgraded = {**existing, **updates}
                 try:
-                    bridge = _daytona_create_and_sync(upgraded, files)
+                    bridge = _daytona_create_and_sync(upgraded, files, repo=repo, token=repo_token)
                     updates.update({
                         "provider_runtime_id": bridge["sandbox_id"],
                         "root_path": bridge["root_path"],
@@ -1648,9 +1832,13 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "status": "ready" if provider["capabilities"]["commands"] else "bridge_pending" if provider["configured"] else "fallback_ready",
             "repo_full_name": workspace["repo_full_name"],
             "branch": workspace["branch"],
-            "root_path": payload.get("root_path") or "/home/daytona/project",
-            "install_command": payload.get("install_command") or "npm install",
-            "dev_command": payload.get("dev_command") or "npm run dev",
+            "root_path": payload.get("root_path") or f"/home/daytona/workspaces/{workspace_id}",
+            "install_command": payload.get("install_command") or runtime_config["install_command"],
+            "dev_command": payload.get("dev_command") or runtime_config["dev_command"],
+            "build_command": payload.get("build_command") or runtime_config["build_command"],
+            "test_command": payload.get("test_command") or runtime_config["test_command"],
+            "lint_command": payload.get("lint_command") or runtime_config["lint_command"],
+            "package_manager": runtime_config["package_manager"],
             "preview_url": None,
             "files_synced": len(files),
             "capabilities": provider["capabilities"],
@@ -1681,7 +1869,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
 
         if runtime.get("provider_runtime_id"):
             try:
-                synced = _daytona_sync_files(runtime, files)
+                synced = _daytona_sync_files(runtime, files, repo=repo, token=repo_token)
                 runtime["files_synced"] = synced
                 runtime["status"] = "ready"
             except Exception as exc:
@@ -1693,7 +1881,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 })
         elif provider["provider"] == "daytona" and provider["capabilities"]["commands"]:
             try:
-                bridge = _daytona_create_and_sync(runtime, files)
+                bridge = _daytona_create_and_sync(runtime, files, repo=repo, token=repo_token)
                 runtime.update({
                     "provider_runtime_id": bridge["sandbox_id"],
                     "root_path": bridge["root_path"],
@@ -1733,6 +1921,95 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         ).sort("created_at", 1).to_list(200)
         return {"runtime": runtime, "logs": logs, "provider": _runtime_provider()}
 
+    def _preview_user_from_request(request: Request) -> dict:
+        auth = request.headers.get("authorization", "")
+        token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+        token = token or request.query_params.get("arevei_token", "")
+        token = token or request.cookies.get("arevei_preview_token", "")
+        if not token:
+            raise HTTPException(401, "Missing preview auth token")
+        payload = decode_token(token)
+        return {
+            "user_id": payload["sub"],
+            "role": payload.get("role", "founder_admin"),
+            "tenant_id": payload.get("tenant_id"),
+        }
+
+    async def _proxy_workspace_preview_response(workspace_id: str, path: str, request: Request) -> Response:
+        user = _preview_user_from_request(request)
+        await _workspace(workspace_id, user)
+        runtime = await _runtime_session(workspace_id, user)
+        if not runtime or not runtime.get("preview_url"):
+            raise HTTPException(404, "Preview URL is not ready. Run the dev server first.")
+        base_parts = urlsplit(runtime["preview_url"])
+        upstream_path = "/" + path.lstrip("/")
+        base_query_map = parse_qs(base_parts.query, keep_blank_values=True)
+        base_query = [(k, v) for k, values in base_query_map.items() for v in values]
+        incoming_query = [(k, v) for k, v in parse_qsl(str(request.url.query), keep_blank_values=True) if k != "arevei_token"]
+        upstream_url = urlunsplit((
+            base_parts.scheme,
+            base_parts.netloc,
+            upstream_path,
+            urlencode(base_query + incoming_query),
+            "",
+        ))
+        headers = {
+            "User-Agent": request.headers.get("user-agent", "AREVEI-Preview"),
+            "Accept": request.headers.get("accept", "*/*"),
+            "X-Daytona-Skip-Preview-Warning": "true",
+            "x-daytona-skip-preview-warning": "true",
+        }
+        daytona_token = (base_query_map.get("token") or [""])[0]
+        if daytona_token:
+            headers["x-daytona-preview-token"] = daytona_token
+        try:
+            upstream = requests.get(
+                upstream_url,
+                headers=headers,
+                timeout=30,
+                allow_redirects=True,
+            )
+        except requests.RequestException as exc:
+            raise HTTPException(502, f"Preview upstream is not reachable: {str(exc)[:180]}")
+        content_type = upstream.headers.get("content-type", "text/html")
+        body = upstream.content
+        if any(kind in content_type for kind in ("text/html", "javascript", "text/css", "application/json")):
+            try:
+                text = body.decode(upstream.encoding or "utf-8", errors="replace")
+                proxy_prefix = f"/api/workspaces/{workspace_id}/runtime/preview-proxy"
+                text = re.sub(r'((?:src|href|action)=["\'])/(?!/)', rf"\1{proxy_prefix}/", text, flags=re.IGNORECASE)
+                text = re.sub(r'(url\(["\']?)/(?!/)', rf"\1{proxy_prefix}/", text, flags=re.IGNORECASE)
+                for prefix in ("/@vite/", "/@react-refresh", "/src/", "/assets/", "/node_modules/", "/public/"):
+                    text = text.replace(f'"{prefix}', f'"{proxy_prefix}{prefix}')
+                    text = text.replace(f"'{prefix}", f"'{proxy_prefix}{prefix}")
+                    text = text.replace(f"`{prefix}", f"`{proxy_prefix}{prefix}")
+                body = text.encode("utf-8")
+            except Exception:
+                body = upstream.content
+        response = Response(
+            content=body,
+            status_code=upstream.status_code,
+            media_type=content_type,
+            headers={"Cache-Control": "no-store"},
+        )
+        if request.query_params.get("arevei_token"):
+            response.set_cookie(
+                "arevei_preview_token",
+                request.query_params["arevei_token"],
+                httponly=True,
+                samesite="lax",
+                max_age=60 * 60 * 6,
+            )
+        return response
+
+    @r.api_route("/workspaces/{workspace_id}/runtime/preview-proxy", methods=["GET", "HEAD"])
+    async def proxy_workspace_preview_root(workspace_id: str, request: Request):
+        return await _proxy_workspace_preview_response(workspace_id, "", request)
+
+    @r.api_route("/workspaces/{workspace_id}/runtime/preview-proxy/{path:path}", methods=["GET", "HEAD"])
+    async def proxy_workspace_preview_path(workspace_id: str, path: str, request: Request):
+        return await _proxy_workspace_preview_response(workspace_id, path, request)
+
     @r.post("/workspaces/{workspace_id}/runtime/stop")
     async def stop_workspace_runtime(workspace_id: str, user=Depends(current_user)):
         await _workspace(workspace_id, user)
@@ -1755,7 +2032,9 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
 
     @r.post("/workspaces/{workspace_id}/runtime/sync")
     async def sync_workspace_runtime(workspace_id: str, user=Depends(current_user)):
-        await _workspace(workspace_id, user)
+        workspace = await _workspace(workspace_id, user)
+        repo = await _repo(workspace["repo_id"], user)
+        repo_token = await _installation_token(repo["installation_id"]) if repo.get("provider") == "github" else None
         runtime = await _runtime_session(workspace_id, user)
         if not runtime:
             raise HTTPException(400, "Start runtime first")
@@ -1763,7 +2042,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         files = await _active_files(workspace_id)
         if runtime.get("provider") == "daytona" and runtime.get("capabilities", {}).get("commands"):
             try:
-                synced = _daytona_sync_files(runtime, files)
+                synced = _daytona_sync_files(runtime, files, repo=repo, token=repo_token)
                 await db.runtime_sessions.update_one(
                     {"id": runtime["id"]},
                     {"$set": {"files_synced": synced, "root_path": _remote_workspace_root(runtime), "status": "ready", "updated_at": now_iso()}},
@@ -1810,6 +2089,8 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
 
         if runtime.get("provider") == "daytona":
             files = await _active_files(workspace_id)
+            repo = await _repo(workspace["repo_id"], user)
+            repo_token = await _installation_token(repo["installation_id"]) if repo.get("provider") == "github" else None
             if not runtime.get("provider_runtime_id"):
                 msg = (
                     "Daytona runtime has no sandbox id. Click Start again after setting Daytona region, "
@@ -1829,7 +2110,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                     try:
                         replacement = {**runtime}
                         old_sandbox_id = replacement.pop("provider_runtime_id", None)
-                        bridge = _daytona_create_and_sync(replacement, files)
+                        bridge = _daytona_create_and_sync(replacement, files, repo=repo, token=repo_token)
                         runtime.update({
                             "provider_runtime_id": bridge["sandbox_id"],
                             "root_path": bridge["root_path"],
@@ -1904,6 +2185,36 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             workspace,
             "Reading workspace files, project index, and previous chat context before proposing code edits.",
         )
+        runtime_output = await _run_agent_runtime_intent(workspace, message, user)
+        edit_words = ("edit", "change", "create", "update", "fix", "build", "add", "remove", "design", "page", "component")
+        if runtime_output and not any(word in message.lower() for word in edit_words):
+            assistant_doc = {
+                "id": new_id(),
+                "tenant_id": user["tenant_id"],
+                "workspace_id": workspace_id,
+                "project_id": workspace.get("project_id"),
+                "chat_id": workspace.get("chat_id"),
+                "repo_id": workspace["repo_id"],
+                "user_id": user["user_id"],
+                "role": "assistant",
+                "content": runtime_output,
+                "changed_files": [],
+                "created_at": now_iso(),
+            }
+            await db.workspace_chat_messages.insert_one(assistant_doc)
+            return {
+                "id": new_id(),
+                "tenant_id": user["tenant_id"],
+                "workspace_id": workspace_id,
+                "prompt": message,
+                "assistant_message": runtime_output,
+                "changes": [],
+                "status": "command_completed",
+                "messages": [
+                    {k: v for k, v in user_message.items() if k != "_id"},
+                    {k: v for k, v in assistant_doc.items() if k != "_id"},
+                ],
+            }
         assistant_message, diffs = await _build_ai_proposal(workspace, message)
         if diffs:
             await _append_workspace_activity(
