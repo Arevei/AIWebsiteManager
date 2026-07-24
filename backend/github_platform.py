@@ -259,10 +259,19 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "tailwind.config.js",
             "tailwind.config.ts",
             ".env.example",
+            "index.html",
+            "public/index.html",
             "src/App.jsx",
+            "src/App.js",
             "src/App.tsx",
+            "src/index.js",
+            "src/index.jsx",
+            "src/index.ts",
+            "src/index.tsx",
             "src/main.jsx",
+            "src/main.js",
             "src/main.tsx",
+            "src/main.ts",
             "app/page.tsx",
             "app/page.jsx",
             "pages/index.tsx",
@@ -270,7 +279,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         }
         selected = [path for path in paths if path in important]
         selected.extend(path for path in paths if path.startswith("src/") and path.endswith((".jsx", ".tsx")) and path not in selected)
-        return selected[:18]
+        return selected[:30]
 
     def _runtime_commands(paths: list[str], package_json: str | None = None) -> dict:
         package_manager = _manifest_summary(paths)["package_manager"]
@@ -1083,18 +1092,20 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         ref = _gh_request("GET", f"/repos/{owner}/{name}/git/ref/heads/{branch}", token=token)
         sha = ref["object"]["sha"]
         tree = _gh_request("GET", f"/repos/{owner}/{name}/git/trees/{sha}?recursive=1", token=token)
-        files = []
+        blobs = []
         for item in tree.get("tree", []):
             if item.get("type") == "blob" and item.get("size", 0) <= MAX_FILE_BYTES:
-                files.append({
+                blobs.append({
                     "path": item["path"],
                     "sha": item.get("sha"),
                     "size": item.get("size", 0),
                     "type": "blob",
                     "language": _language_for_path(item["path"]),
                 })
-            if len(files) >= MAX_INDEX_FILES:
-                break
+        important = set(_initial_context_paths([item["path"] for item in blobs]))
+        files = [item for item in blobs if item["path"] in important]
+        files.extend(item for item in blobs if item["path"] not in important)
+        files = files[:MAX_INDEX_FILES]
         return files, {"head_sha": sha, "tree_sha": tree.get("sha")}
 
     async def _fetch_real_file(repo: dict, path: str, branch: str) -> dict:
@@ -1110,6 +1121,24 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "size": data.get("size", 0),
             "language": _language_for_path(path),
         }
+
+    async def _ensure_runtime_bootstrap_files(workspace: dict, repo: dict) -> int:
+        if repo.get("provider") != "github":
+            return 0
+        existing = {f["path"] for f in await _active_files(workspace["id"])}
+        paths = [item["path"] for item in workspace.get("tree", [])]
+        required = [path for path in _initial_context_paths(paths) if path not in existing]
+        loaded = 0
+        for path in required:
+            try:
+                fetched = await _fetch_real_file(repo, path, workspace.get("branch") or repo.get("default_branch") or "main")
+                if fetched.get("content") == "[binary file omitted]":
+                    continue
+                await _upsert_workspace_file(workspace["id"], fetched["path"], fetched["content"], fetched["content"])
+                loaded += 1
+            except Exception:
+                continue
+        return loaded
 
     async def _workspace_file(workspace_id: str, path: str) -> dict | None:
         return await db.workspace_files.find_one(
@@ -1715,6 +1744,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         repo = await _repo(workspace["repo_id"], user)
         repo_token = await _installation_token(repo["installation_id"]) if repo.get("provider") == "github" else None
         provider = _runtime_provider()
+        loaded_bootstrap = await _ensure_runtime_bootstrap_files(workspace, repo)
         files = await _active_files(workspace_id)
         existing = await _runtime_session(workspace_id, user)
         runtime_config = workspace.get("runtime_config") or _runtime_commands([item["path"] for item in workspace.get("tree", [])])
@@ -1905,6 +1935,8 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             action = "Reused" if runtime.get("sandbox_reused") else "Created"
             await _append_runtime_log(runtime["id"], f"{action} Daytona sandbox {runtime['provider_runtime_id']}.")
         await _append_runtime_log(runtime["id"], f"Synced {len(files)} workspace file(s) into runtime state.")
+        if loaded_bootstrap:
+            await _append_runtime_log(runtime["id"], f"Loaded {loaded_bootstrap} missing startup file(s) from GitHub before sync.")
         if runtime.get("status") == "bridge_error":
             await _append_runtime_log(runtime["id"], runtime["note"], "error")
         runtime.pop("_id", None)
@@ -2039,6 +2071,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         if not runtime:
             raise HTTPException(400, "Start runtime first")
         runtime = await _upgrade_runtime_to_current_provider(runtime, workspace_id)
+        loaded_bootstrap = await _ensure_runtime_bootstrap_files(workspace, repo)
         files = await _active_files(workspace_id)
         if runtime.get("provider") == "daytona" and runtime.get("capabilities", {}).get("commands"):
             try:
@@ -2048,6 +2081,8 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                     {"$set": {"files_synced": synced, "root_path": _remote_workspace_root(runtime), "status": "ready", "updated_at": now_iso()}},
                 )
                 await _append_runtime_log(runtime["id"], f"Synced {synced} file(s) into Daytona sandbox.")
+                if loaded_bootstrap:
+                    await _append_runtime_log(runtime["id"], f"Loaded {loaded_bootstrap} missing startup file(s) from GitHub before sync.")
                 return await db.runtime_sessions.find_one({"id": runtime["id"]}, {"_id": 0})
             except Exception as exc:
                 await db.runtime_sessions.update_one(
@@ -2088,9 +2123,12 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             return {"ok": True, "status": runtime.get("status", "fallback_ready"), "output": msg}
 
         if runtime.get("provider") == "daytona":
-            files = await _active_files(workspace_id)
             repo = await _repo(workspace["repo_id"], user)
             repo_token = await _installation_token(repo["installation_id"]) if repo.get("provider") == "github" else None
+            loaded_bootstrap = await _ensure_runtime_bootstrap_files(workspace, repo)
+            files = await _active_files(workspace_id)
+            if loaded_bootstrap:
+                await _append_runtime_log(runtime["id"], f"Loaded {loaded_bootstrap} missing startup file(s) from GitHub before command.")
             if not runtime.get("provider_runtime_id"):
                 msg = (
                     "Daytona runtime has no sandbox id. Click Start again after setting Daytona region, "
