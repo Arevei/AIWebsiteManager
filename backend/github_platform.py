@@ -285,6 +285,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
     def _runtime_commands(paths: list[str], package_json: str | None = None) -> dict:
         package_manager = _manifest_summary(paths)["package_manager"]
         scripts = {}
+        package_lower = (package_json or "").lower()
         if package_json:
             try:
                 scripts = json.loads(package_json).get("scripts", {}) or {}
@@ -308,15 +309,29 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 return f"{runner} {name}" if package_manager == "npm" else f"{package_manager} {name}"
             return fallback
 
-        if "dev" in scripts:
+        if "react-scripts" in package_lower and "start" in scripts:
+            framework = "create-react-app"
+            preview_port = 3000
+            dev = script("start", "npm start")
+        elif "next" in package_lower:
+            framework = "next"
+            preview_port = 3000
+            dev = script("dev", "npx next dev")
+        elif "vite" in package_lower:
+            framework = "vite"
+            preview_port = 5173
+            dev = script("dev", "npx vite")
+        elif "dev" in scripts:
+            framework = "node"
+            preview_port = 3000
             dev = script("dev", "npm run dev")
-        elif "next" in (package_json or "").lower():
-            dev = "npx next dev -H 0.0.0.0"
-        elif "vite" in (package_json or "").lower():
-            dev = "npx vite --host 0.0.0.0"
         else:
+            framework = "node"
+            preview_port = 3000
             dev = script("start", "npm run dev")
         return {
+            "framework": framework,
+            "preview_port": preview_port,
             "package_manager": package_manager,
             "install_command": install,
             "dev_command": dev,
@@ -773,13 +788,14 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
 
     def _infer_preview_port(files: list[dict], command: str | None = None) -> int:
         command = command or ""
-        port_match = re.search(r"(?:--port|-p)\s+(\d{2,5})", command)
+        port_match = re.search(r"(?:--port|-p|PORT=)\s*(\d{2,5})", command)
         if port_match:
             return int(port_match.group(1))
         package = next((f.get("content", "") for f in files if f.get("path") == "package.json"), "")
-        if "vite" in package.lower():
+        package_lower = package.lower()
+        if "vite" in package_lower:
             return 5173
-        if "next" in package.lower():
+        if "next" in package_lower or "react-scripts" in package_lower:
             return 3000
         return 3000
 
@@ -797,6 +813,8 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             if re.search(r"\b(npm|pnpm|yarn)\s+run\s+dev\b", command):
                 return f"{command} -- -H 0.0.0.0 -p {port}"
             return f"{command} -H 0.0.0.0 -p {port}"
+        if "react-scripts" in package_lower:
+            return f"BROWSER=none HOST=0.0.0.0 PORT={port} {command}"
         return f"HOST=0.0.0.0 PORT={port} {command}"
 
     def _daytona_sandbox_state(sandbox: Any) -> str:
@@ -1780,6 +1798,8 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 "test_command": payload.get("test_command") or existing.get("test_command") or runtime_config["test_command"],
                 "lint_command": payload.get("lint_command") or existing.get("lint_command") or runtime_config["lint_command"],
                 "package_manager": existing.get("package_manager") or runtime_config["package_manager"],
+                "framework": existing.get("framework") or runtime_config.get("framework"),
+                "preview_port": existing.get("preview_port") or runtime_config.get("preview_port", 3000),
                 "updated_at": now_iso(),
             }
             if supplied_runtime_id:
@@ -1883,6 +1903,8 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "test_command": payload.get("test_command") or runtime_config["test_command"],
             "lint_command": payload.get("lint_command") or runtime_config["lint_command"],
             "package_manager": runtime_config["package_manager"],
+            "framework": runtime_config.get("framework"),
+            "preview_port": runtime_config.get("preview_port", 3000),
             "preview_url": None,
             "files_synced": len(files),
             "capabilities": provider["capabilities"],

@@ -25,6 +25,7 @@ import {
   Plus,
   Power,
   RocketLaunch,
+  ArrowSquareOut,
   SidebarSimple,
   SpinnerGap,
   SquaresFour,
@@ -803,10 +804,13 @@ export default function DeveloperPlatform() {
     try {
       const res = await api.put(`/workspaces/${workspace.id}/files/${encodePath(selectedPath)}`, { content: editorValue });
       setFile(res.data);
+      await runBuildCheck("manual file save");
       await refreshWorkspace(workspace.id);
       toast.success("Saved");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Save failed");
+    } finally {
+      setAgentStatus("");
     }
   };
 
@@ -818,8 +822,9 @@ export default function DeveloperPlatform() {
       await api.post(`/workspaces/${workspace.id}/changes/${changeId}/apply`, { accept });
       try {
         await api.post(`/workspaces/${workspace.id}/runtime/sync`);
+        if (accept) await runBuildCheck("accepted AI changes");
       } catch (syncErr) {
-        toast.error(syncErr.response?.data?.detail || "Applied locally, but Daytona sync failed");
+        toast.error(syncErr.response?.data?.detail || "Applied locally, but runtime check failed");
       }
       await refreshWorkspace(workspace.id);
       setRightView("preview");
@@ -830,6 +835,20 @@ export default function DeveloperPlatform() {
       setAgentStatus("");
       setLoading(false);
     }
+  };
+
+  const runBuildCheck = async (reason = "latest change") => {
+    if (!workspace || !runtime?.build_command) return null;
+    setAgentStatus(`Checking build with ${runtime.build_command}...`);
+    const res = await api.post(`/workspaces/${workspace.id}/runtime/commands`, { command: runtime.build_command });
+    if (res.data?.status === "command_failed") {
+      setAgentStatus("Build failed. Asking agent to prepare a repair proposal...");
+      await api.post(`/workspaces/${workspace.id}/ai/chat`, {
+        message: `The build failed after ${reason}. Read the project files and prepare a focused fix. Build command: ${runtime.build_command}\n\nBuild output:\n${res.data.output || ""}`,
+      });
+      toast.error("Build failed. AI repair proposal is ready to review.");
+    }
+    return res.data;
   };
 
   const revertWorkspace = async () => {
@@ -1217,7 +1236,23 @@ export default function DeveloperPlatform() {
               <div className={cx("min-h-0 flex-1", p.codeBg)}>
                 {rightView === "preview" ? (
                   runtime?.preview_url ? (
-                    <iframe title="Live preview" src={runtime.preview_url} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
+                    <div className="flex h-full min-h-0 flex-col">
+                      <div className={cx("flex h-10 items-center gap-2 border-b px-3 text-xs", p.side)}>
+                        <span className={cx("font-mono uppercase tracking-[0.18em]", p.faint)}>
+                          {runtime.framework || "preview"}:{runtime.preview_port || "auto"}
+                        </span>
+                        <input
+                          readOnly
+                          value={runtime.preview_url}
+                          className={cx("min-w-0 flex-1 rounded border px-2 py-1 font-mono text-xs outline-none", p.input)}
+                          onFocus={(event) => event.currentTarget.select()}
+                        />
+                        <a href={runtime.preview_url} target="_blank" rel="noreferrer" className={cx("grid h-7 w-8 place-items-center rounded border", p.inverseButton)} title="Open preview in new tab">
+                          <ArrowSquareOut size={15} />
+                        </a>
+                      </div>
+                      <iframe title="Live preview" src={runtime.preview_url} className="min-h-0 flex-1 bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
+                    </div>
                   ) : runtime && ["preview_ready", "command_succeeded", "ready", "bridge_error"].includes(runtime.status) ? (
                     <div className="flex h-full items-center justify-center p-6">
                       <div className={cx("w-full max-w-xl rounded-lg border p-5", p.panel)}>
