@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
@@ -41,6 +42,7 @@ logger = logging.getLogger("arevei")
 logging.basicConfig(level=logging.INFO)
 
 mongo_url = os.environ["MONGO_URL"]
+mock_db_enabled = os.environ.get("USE_MOCK_DB", "").lower() == "true"
 if os.environ.get("USE_MOCK_DB", "").lower() == "true":
     from mongomock_motor import AsyncMongoMockClient
 
@@ -49,6 +51,12 @@ if os.environ.get("USE_MOCK_DB", "").lower() == "true":
 else:
     mongo_client = AsyncIOMotorClient(mongo_url)
 db = mongo_client[os.environ["DB_NAME"]]
+logger.info(
+    "Mongo persistence configured: mock=%s db=%s host=%s",
+    mock_db_enabled,
+    os.environ["DB_NAME"],
+    urlsplit(mongo_url).hostname or "unknown",
+)
 
 app = FastAPI(title="AREVEI API")
 api = APIRouter(prefix="/api")
@@ -235,6 +243,41 @@ async def me(user=Depends(current_user)):
     if not doc:
         raise HTTPException(status_code=404, detail="User not found")
     return UserPublic(**doc)
+
+
+@api.get("/debug/persistence")
+async def persistence_debug(user=Depends(current_user)):
+    tenant_id = user.get("tenant_id")
+    user_id = user["user_id"]
+    mongo_host = urlsplit(mongo_url).hostname or "unknown"
+    return {
+        "mock_db": mock_db_enabled,
+        "db_name": os.environ["DB_NAME"],
+        "mongo_host": mongo_host,
+        "user_id": user_id,
+        "tenant_id": tenant_id,
+        "counts": {
+            "users_same_email_scope": await db.users.count_documents({"id": user_id}),
+            "general_chats": await db.general_chats.count_documents({"tenant_id": tenant_id, "user_id": user_id}),
+            "general_chat_messages": await db.general_chat_messages.count_documents({"tenant_id": tenant_id, "user_id": user_id}),
+            "workspace_sessions": await db.workspace_sessions.count_documents({"tenant_id": tenant_id, "user_id": user_id}),
+            "workspace_chat_messages": await db.workspace_chat_messages.count_documents({"tenant_id": tenant_id, "user_id": user_id}),
+            "projects": await db.projects.count_documents({"tenant_id": tenant_id}),
+            "project_chats": await db.project_chats.count_documents({"tenant_id": tenant_id}),
+        },
+        "latest": {
+            "general_chat": await db.general_chats.find_one(
+                {"tenant_id": tenant_id, "user_id": user_id},
+                {"_id": 0, "id": 1, "title": 1, "updated_at": 1},
+                sort=[("updated_at", -1)],
+            ),
+            "workspace": await db.workspace_sessions.find_one(
+                {"tenant_id": tenant_id, "user_id": user_id},
+                {"_id": 0, "id": 1, "repo_full_name": 1, "updated_at": 1},
+                sort=[("updated_at", -1)],
+            ),
+        },
+    }
 
 
 # ----------------------- Site / CMS -----------------------
