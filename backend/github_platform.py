@@ -37,10 +37,74 @@ MOCK_FILES = {
     "README.md": "# Starter App\n\nThis repository is ready for AI-assisted development.\n",
     "package.json": json.dumps(
         {
-            "scripts": {"dev": "vite --host 0.0.0.0", "build": "vite build"},
-            "dependencies": {"@vitejs/plugin-react": "latest", "vite": "latest", "react": "latest"},
+            "scripts": {"dev": "vite --host 0.0.0.0", "build": "vite build", "preview": "vite preview"},
+            "dependencies": {"react": "^18.2.0", "react-dom": "^18.2.0"},
+            "devDependencies": {"@vitejs/plugin-react": "^4.2.1", "vite": "^5.1.4"}
         },
         indent=2,
+    ),
+    "vite.config.js": "import { defineConfig } from 'vite';\nimport react from '@vitejs/plugin-react';\n\nexport default defineConfig({\n  plugins: [react()],\n});\n",
+    "tsconfig.json": json.dumps(
+        {
+            "compilerOptions": {
+                "target": "ES2020",
+                "useDefineForClassFields": True,
+                "lib": ["ES2020", "DOM", "DOM.Iterable"],
+                "module": "ESNext",
+                "skipLibCheck": True,
+                "moduleResolution": "bundler",
+                "allowImportingTsExtensions": True,
+                "resolveJsonModule": True,
+                "isolatedModules": True,
+                "noEmit": True,
+                "jsx": "react-jsx",
+                "strict": True,
+                "noUnusedLocals": True,
+                "noUnusedParameters": True,
+                "noFallthroughCasesInSwitch": True
+            },
+            "include": ["src"],
+            "references": [{ "path": "./tsconfig.node.json" }]
+        },
+        indent=2,
+    ),
+    "tsconfig.node.json": json.dumps(
+        {
+            "compilerOptions": {
+                "composite": True,
+                "skipLibCheck": True,
+                "module": "ESNext",
+                "moduleResolution": "bundler",
+                "allowSyntheticDefaultImports": True
+            },
+            "include": ["vite.config.js"]
+        },
+        indent=2,
+    ),
+    "index.html": (
+        "<!doctype html>\n"
+        "<html lang=\"en\">\n"
+        "  <head>\n"
+        "    <meta charset=\"UTF-8\" />\n"
+        "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n"
+        "    <title>AI Workspace App</title>\n"
+        "  </head>\n"
+        "  <body>\n"
+        "    <div id=\"root\"></div>\n"
+        "    <script type=\"module\" src=\"/src/main.jsx\"></script>\n"
+        "  </body>\n"
+        "</html>\n"
+    ),
+    "src/main.jsx": (
+        "import React from 'react';\n"
+        "import ReactDOM from 'react-dom/client';\n"
+        "import App from './App.jsx';\n"
+        "import './index.css';\n\n"
+        "ReactDOM.createRoot(document.getElementById('root')).render(\n"
+        "  <React.StrictMode>\n"
+        "    <App />\n"
+        "  </React.StrictMode>,\n"
+        ");\n"
     ),
     "src/App.jsx": (
         "import React from 'react';\n\n"
@@ -48,7 +112,7 @@ MOCK_FILES = {
         "  return <main><h1>Ship something useful.</h1></main>;\n"
         "}\n"
     ),
-    "src/styles.css": "body { font-family: system-ui, sans-serif; margin: 0; }\n",
+    "src/index.css": "body { font-family: system-ui, sans-serif; margin: 0; }\n",
 }
 
 
@@ -608,7 +672,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             title = "Project Control Center"
         return (
             "import React from 'react';\n"
-            "import './styles.css';\n\n"
+            "import './index.css';\n\n"
             "const features = [\n"
             "  'Connect a GitHub repository',\n"
             "  'Ask AI to edit multiple files',\n"
@@ -886,20 +950,27 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         if not full_name:
             _daytona_exec(sandbox, f"mkdir -p {shlex.quote(root)}", timeout=60)
             return
-        auth = f"-c http.extraHeader={shlex.quote('AUTHORIZATION: bearer ' + token)} " if token else ""
-        repo_url = f"https://github.com/{full_name}.git"
+        if token:
+            repo_url = f"https://x-access-token:{token}@github.com/{full_name}.git"
+        else:
+            repo_url = f"https://github.com/{full_name}.git"
         command = (
             f"mkdir -p {shlex.quote(posixpath.dirname(root))} && "
             f"if [ -d {shlex.quote(root)}/.git ]; then "
-            f"git -C {shlex.quote(root)} {auth}fetch origin {shlex.quote(branch)} && "
+            f"git -C {shlex.quote(root)} fetch origin {shlex.quote(branch)} && "
             f"git -C {shlex.quote(root)} checkout {shlex.quote(branch)} && "
             f"git -C {shlex.quote(root)} reset --hard FETCH_HEAD; "
             f"else "
             f"rm -rf {shlex.quote(root)} && "
-            f"git {auth}clone --depth 1 --branch {shlex.quote(branch)} {shlex.quote(repo_url)} {shlex.quote(root)}; "
+            f"git clone --depth 1 --branch {shlex.quote(branch)} {shlex.quote(repo_url)} {shlex.quote(root)}; "
             f"fi"
         )
-        _daytona_exec(sandbox, command, timeout=300)
+        response = _daytona_exec(sandbox, command, timeout=300)
+        result = getattr(response, "result", None)
+        code = getattr(result, "code", 0) if result else 0
+        if code != 0:
+            out = _daytona_exec_output(response)
+            raise RuntimeError(f"Git clone failed (code {code}): {out}")
 
     def _daytona_remove_workspace_folder(runtime: dict):
         sandbox_id = runtime.get("provider_runtime_id")
@@ -937,7 +1008,12 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         root = _remote_workspace_root(runtime)
         _daytona_prepare_git_checkout(sandbox, runtime, repo, token)
         _daytona_exec(sandbox, f"mkdir -p {shlex.quote(root)}", timeout=60)
-        for f in files:
+        if repo and repo.get("provider") == "github":
+            sync_list = [f for f in files if f.get("content") != f.get("original_content") or not f.get("original_content")]
+        else:
+            sync_list = files
+
+        for f in sync_list:
             remote_path = _remote_file_path(runtime, f["path"])
             remote_dir = posixpath.dirname(remote_path)
             _daytona_exec(sandbox, f"mkdir -p {shlex.quote(remote_dir)}", timeout=60)
@@ -952,7 +1028,12 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         root = _remote_workspace_root(runtime)
         _daytona_prepare_git_checkout(sandbox, runtime, repo, token)
         _daytona_exec(sandbox, f"mkdir -p {shlex.quote(root)}", timeout=60)
-        for f in files:
+        if repo and repo.get("provider") == "github":
+            sync_list = [f for f in files if f.get("content") != f.get("original_content") or not f.get("original_content")]
+        else:
+            sync_list = files
+
+        for f in sync_list:
             remote_path = _remote_file_path(runtime, f["path"])
             remote_dir = posixpath.dirname(remote_path)
             _daytona_exec(sandbox, f"mkdir -p {shlex.quote(remote_dir)}", timeout=60)
@@ -1275,7 +1356,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         wants_ui = any(word in lower for word in ("create", "new", "feature", "landing", "dashboard", "component", "page", "ui", "website", "design"))
         if wants_ui or not files:
             app_path = "src/App.jsx" if "src/App.jsx" in by_path or "src/App.js" not in by_path else "src/App.js"
-            css_path = "src/styles.css"
+            css_path = "src/index.css"
             readme_path = "README.md"
             app_old = by_path.get(app_path, {}).get("content", "")
             css_old = by_path.get(css_path, {}).get("content", "")
@@ -1522,13 +1603,19 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             for path, content in MOCK_FILES.items():
                 await _upsert_workspace_file(workspace["id"], path, content, content)
         else:
+            import asyncio
             initial_paths = _initial_context_paths([item["path"] for item in tree])
-            for item in [entry for entry in tree if entry["path"] in initial_paths]:
+            
+            async def fetch_and_upsert(path):
                 try:
-                    fetched = await _fetch_real_file(repo, item["path"], branch)
+                    fetched = await _fetch_real_file(repo, path, branch)
                     await _upsert_workspace_file(workspace["id"], fetched["path"], fetched["content"], fetched["content"])
                 except Exception:
-                    continue
+                    pass
+
+            tasks = [fetch_and_upsert(entry["path"]) for entry in tree if entry["path"] in initial_paths]
+            if tasks:
+                await asyncio.gather(*tasks)
         active_files = await _active_files(workspace["id"])
         package_json = next((f.get("content") for f in active_files if f.get("path") == "package.json"), None)
         runtime_config = _runtime_commands([item["path"] for item in tree], package_json)

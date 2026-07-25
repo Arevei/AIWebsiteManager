@@ -495,6 +495,16 @@ export default function DeveloperPlatform() {
   }, []);
 
   const loadStartData = async () => {
+    try {
+      const currentRes = await api.get("/workspaces/current");
+      if (currentRes.data.workspace) {
+        setWorkspace(currentRes.data.workspace);
+        setProject(currentRes.data.project || null);
+        setChat(currentRes.data.chat || null);
+        setScreen("workspace");
+        refreshWorkspace(currentRes.data.workspace.id);
+      }
+    } catch (e) {}
     await Promise.all([loadRecentWorkspaces(), loadRepos(), loadGeneralChats()]);
   };
 
@@ -553,6 +563,8 @@ export default function DeveloperPlatform() {
 
   const importRepoDocument = async (repo) => {
     if (!repo?.id) return;
+    if (window.__isImporting) return;
+    window.__isImporting = true;
     setImportLoading(true);
     setAgentStatus("Importing repository and indexing workspace...");
     try {
@@ -573,6 +585,7 @@ export default function DeveloperPlatform() {
       toast.error(err.response?.data?.detail || "Repository import failed");
       setImportOpen(true);
     } finally {
+      window.__isImporting = false;
       setAgentStatus("");
       setImportLoading(false);
     }
@@ -587,14 +600,9 @@ export default function DeveloperPlatform() {
     setAgentStatus("Finishing GitHub connection and loading repositories...");
     try {
       await api.get(`/github/install/callback${window.location.search}`);
-      const repositories = await loadRepos();
+      await loadRepos();
       window.history.replaceState({}, "", window.location.pathname);
-      const repoToLoad = repositories[0];
-      if (repoToLoad) {
-        await importRepoDocument(repoToLoad);
-      } else {
-        toast.error("GitHub connected, but no repositories were returned. Check GitHub App repository access.");
-      }
+      toast.success("GitHub connected. Please select a repository to import.");
     } catch (err) {
       toast.error(err.response?.data?.detail || "GitHub callback failed");
     } finally {
