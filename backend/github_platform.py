@@ -127,19 +127,11 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         return res.json()
 
     async def _installation_token(installation_id: int | str) -> str:
-        try:
-            data = _gh_request(
-                "POST",
-                f"/app/installations/{installation_id}/access_tokens",
-                token=_github_app_jwt(),
-            )
-        except HTTPException as exc:
-            if exc.status_code == 404:
-                raise HTTPException(
-                    404,
-                    "GitHub installation was not found for the configured GitHub App. Reconnect GitHub, or verify GITHUB_APP_ID and GITHUB_PRIVATE_KEY belong to the same installed app.",
-                )
-            raise
+        data = _gh_request(
+            "POST",
+            f"/app/installations/{installation_id}/access_tokens",
+            token=_github_app_jwt(),
+        )
         return data["token"]
 
     async def _tenant_id(user: dict) -> str:
