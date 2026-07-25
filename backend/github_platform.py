@@ -19,9 +19,12 @@ import time
 from typing import Any
 from urllib.parse import parse_qsl, parse_qs, urlencode, urlsplit, urlunsplit
 
+# pyrefly: ignore [missing-import]
 import jwt
 import requests
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+# pyrefly: ignore [missing-import]
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from auth import current_user, decode_token
@@ -808,6 +811,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
 
     def _daytona_client():
         try:
+            # pyrefly: ignore [missing-import]
             from daytona import Daytona
         except ImportError as exc:
             raise RuntimeError("Install the Daytona Python SDK with `pip install daytona`.") from exc
@@ -925,6 +929,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
 
     def _daytona_find_reusable_sandbox(daytona: Any, runtime: dict):
         try:
+            # pyre-ignore[28,29]
             from daytona import ListSandboxesQuery
             query = ListSandboxesQuery(labels=_daytona_workspace_labels(runtime), limit=20)
             sandboxes = list(daytona.list(query))
@@ -993,6 +998,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         reused = sandbox is not None
         if sandbox is None:
             try:
+                # pyrefly: ignore [missing-import]
                 from daytona import CodeLanguage, CreateSandboxFromSnapshotParams
                 sandbox = daytona.create(CreateSandboxFromSnapshotParams(
                     name=f"arevei-{str(runtime.get('workspace_id') or new_id())[:18]}",
@@ -1578,6 +1584,80 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             res = await db[coll].delete_many({"tenant_id": tid})
             results[coll] = res.deleted_count
         return {"ok": True, "deleted": results}
+
+    @r.get("/vercel/install/start")
+    async def vercel_install_start(redirect_uri: str = None, user=Depends(current_user)):
+        tid = await _tenant_id(user)
+        client_id = os.environ.get("VERCEL_CLIENT_ID")
+        if not client_id:
+            raise HTTPException(400, "VERCEL_CLIENT_ID is not configured in backend environment")
+        
+        state = new_id()
+        await db.vercel_oauth_states.insert_one({
+            "id": state,
+            "tenant_id": tid,
+            "user_id": user["user_id"],
+            "redirect_uri": redirect_uri,
+            "created_at": now_iso(),
+        })
+        
+        params = {"client_id": client_id, "state": state}
+        if redirect_uri:
+            params["redirect_uri"] = redirect_uri
+        return {"url": f"https://vercel.com/oauth/authorize?{urlencode(params)}"}
+
+    @r.get("/vercel/install/callback")
+    async def vercel_install_callback(code: str = None, state: str = None, user=Depends(current_user)):
+        tid = await _tenant_id(user)
+        if not code or not state:
+            raise HTTPException(400, "Missing Vercel authorization code or state")
+        
+        known = await db.vercel_oauth_states.find_one({"id": state, "tenant_id": tid})
+        if not known:
+            raise HTTPException(400, "Invalid installation state (session expired or mismatched)")
+            
+        client_id = os.environ.get("VERCEL_CLIENT_ID")
+        client_secret = os.environ.get("VERCEL_CLIENT_SECRET")
+        if not client_id or not client_secret:
+            raise HTTPException(400, "Vercel OAuth credentials (Client ID / Secret) are not configured on the server")
+            
+        try:
+            # We must use exactly the same redirect_uri that was used in the authorize step
+            active_redirect_uri = known.get("redirect_uri") or os.environ.get("VERCEL_REDIRECT_URI") or "http://localhost:3000/api/vercel/install/callback"
+            resp = requests.post(
+                "https://api.vercel.com/v2/oauth/access_token",
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "code": code,
+                    "redirect_uri": active_redirect_uri
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=10
+            )
+            resp.raise_for_status()
+            token_data = resp.json()
+        except Exception as e:
+            raise HTTPException(400, f"Failed to exchange Vercel token: {str(e)}")
+            
+        await db.vercel_installations.update_one(
+            {"tenant_id": tid},
+            {"$set": {
+                "access_token": token_data.get("access_token"),
+                "team_id": token_data.get("team_id"),
+                "user_id": token_data.get("user_id"),
+                "updated_at": now_iso()
+            }},
+            upsert=True
+        )
+        # Clear the state to prevent replay
+        await db.vercel_oauth_states.delete_one({"id": state})
+        
+        # pyrefly: ignore [missing-import]
+        from fastapi.responses import RedirectResponse
+        base_url = active_redirect_uri.split("/api/vercel/install/callback")[0] if "/api/vercel" in active_redirect_uri else "/"
+        return RedirectResponse(url=f"{base_url}/")
+
 
     @r.post("/repos/{repo_id}/load")
     async def load_repo(repo_id: str, payload: dict, user=Depends(current_user)):
@@ -2657,10 +2737,18 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "created_at": now_iso(),
             "updated_at": now_iso(),
         }
-        if provider == "vercel" and os.environ.get("VERCEL_TOKEN") and payload.get("project_id"):
+        vercel_installation = await db.vercel_installations.find_one({"tenant_id": user["tenant_id"]})
+        vercel_token = vercel_installation.get("access_token") if vercel_installation else os.environ.get("VERCEL_TOKEN")
+        
+        if provider == "vercel" and vercel_token and payload.get("project_id"):
             job.update({
                 "status": "ready_for_provider",
                 "note": "Vercel token and project were detected. Production deploy upload is reserved for the container workspace phase.",
+            })
+        elif provider == "vercel" and vercel_token and not payload.get("project_id"):
+            job.update({
+                "status": "pending_project_link",
+                "note": "Vercel token found, but repository is not yet linked to a Vercel project.",
             })
         else:
             job.update({

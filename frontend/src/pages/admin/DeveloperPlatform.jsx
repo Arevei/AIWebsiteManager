@@ -459,6 +459,7 @@ export default function DeveloperPlatform() {
   const [commitMessage, setCommitMessage] = useState("");
   const [commitOpen, setCommitOpen] = useState(false);
   const [commitJob, setCommitJob] = useState(null);
+  const [vercelOpen, setVercelOpen] = useState(false);
   const [commitHistory, setCommitHistory] = useState([]);
   const [changedFiles, setChangedFiles] = useState([]);
   const [recentLoading, setRecentLoading] = useState(false);
@@ -907,12 +908,27 @@ export default function DeveloperPlatform() {
   };
 
   const publish = async () => {
+    setVercelOpen(true);
+  };
+
+  const connectVercel = async () => {
+    try {
+      const returnUrl = window.location.origin + "/api/vercel/install/callback";
+      const res = await api.get(`/vercel/install/start?redirect_uri=${encodeURIComponent(returnUrl)}`);
+      window.location.href = res.data.url;
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Could not start Vercel connection");
+    }
+  };
+
+  const triggerDeploy = async () => {
     if (!workspace) return;
     try {
       await api.post(`/workspaces/${workspace.id}/deploy`, { provider: "vercel" });
-      toast.success("Publish job created");
+      toast.success("Deployment triggered successfully");
+      setVercelOpen(false);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Publish failed");
+      toast.error(err.response?.data?.detail || "Failed to trigger deployment");
     }
   };
 
@@ -1239,6 +1255,7 @@ export default function DeveloperPlatform() {
                   <button onClick={stopRuntime} disabled={!runtime || runtime.status === "stopped"} className={cx("flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm disabled:opacity-40", p.inverseButton)}>
                     <Power size={16} /> Stop
                   </button>
+                  <button onClick={() => setVercelOpen(true)} disabled={!workspace} className={cx("rounded-md border px-3 py-1.5 text-sm disabled:opacity-40", p.inverseButton)}>Deploy</button>
                   <button onClick={saveFile} disabled={!file} className={cx("rounded-md border px-3 py-1.5 text-sm disabled:opacity-40", p.inverseButton)}>Save</button>
                 </div>
               </div>
@@ -1331,6 +1348,30 @@ export default function DeveloperPlatform() {
         changedFiles={changedFiles}
         commits={commitHistory}
       />
+      {vercelOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setVercelOpen(false)}>
+          <div className={cx("w-full max-w-md rounded-lg border bg-white p-6 shadow-xl dark:bg-[#111111]", p.surface)} onClick={e => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold dark:text-white">Deploy to Vercel</h2>
+              <button onClick={() => setVercelOpen(false)} className={cx("rounded p-1 dark:text-white", p.hoverAction)}><X size={16} /></button>
+            </div>
+            <p className={cx("mb-6 text-sm", p.muted)}>
+              Connect your personal Vercel account to authorize automated deployments directly from this workspace, or trigger an immediate manual deploy.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button onClick={connectVercel} className="flex items-center justify-center gap-2 rounded-md bg-black py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 dark:bg-white dark:text-black dark:hover:bg-neutral-200">
+                Connect Vercel Account
+              </button>
+              <button onClick={triggerDeploy} className={cx("flex items-center justify-center gap-2 rounded-md border py-2.5 text-sm font-medium transition", p.inverseButton)}>
+                Trigger Manual Deploy
+              </button>
+              <button onClick={() => setVercelOpen(false)} className={cx("flex items-center justify-center gap-2 rounded-md border py-2.5 text-sm font-medium transition", p.inverseButton)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 try:
+    # pyrefly: ignore [missing-import]
     from emergentintegrations.llm.chat import LlmChat, UserMessage
 except ImportError:
     LlmChat = None
