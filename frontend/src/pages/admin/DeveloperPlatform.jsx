@@ -502,10 +502,9 @@ export default function DeveloperPlatform() {
         setProject(currentRes.data.project || null);
         setChat(currentRes.data.chat || null);
         setScreen("workspace");
-        setRightView("preview");
         refreshWorkspace(currentRes.data.workspace.id);
       }
-    } catch (e) {}
+    } catch (e) { }
     await Promise.all([loadRecentWorkspaces(), loadRepos(), loadGeneralChats()]);
   };
 
@@ -662,7 +661,6 @@ export default function DeveloperPlatform() {
     setProject(workspaceDoc.project || null);
     setChat(workspaceDoc.chat || null);
     setScreen("workspace");
-    setRightView("preview");
     await refreshWorkspace(workspaceDoc.id);
   };
 
@@ -814,6 +812,7 @@ export default function DeveloperPlatform() {
     try {
       const res = await api.put(`/workspaces/${workspace.id}/files/${encodePath(selectedPath)}`, { content: editorValue });
       setFile(res.data);
+      await api.post(`/workspaces/${workspace.id}/runtime/sync`);
       await refreshWorkspace(workspace.id);
       toast.success("Saved");
     } catch (err) {
@@ -831,7 +830,7 @@ export default function DeveloperPlatform() {
       await api.post(`/workspaces/${workspace.id}/changes/${changeId}/apply`, { accept });
       try {
         await api.post(`/workspaces/${workspace.id}/runtime/sync`);
-        if (accept) await runBuildCheck("accepted AI changes");
+        // if (accept) await runBuildCheck("accepted AI changes");
       } catch (syncErr) {
         toast.error(syncErr.response?.data?.detail || "Applied locally, but runtime check failed");
       }
@@ -845,6 +844,7 @@ export default function DeveloperPlatform() {
       setLoading(false);
     }
   };
+
 
   const runBuildCheck = async (reason = "latest change") => {
     if (!workspace || !runtime?.build_command) return null;
@@ -958,7 +958,7 @@ export default function DeveloperPlatform() {
 
   return (
     <div className={cx("fixed inset-0 flex overflow-hidden", p.app)}>
-    
+
       <aside className={cx("flex shrink-0 flex-col border-r transition-all", sideWidth, p.side)}>
         <div className="flex h-14 items-center justify-between px-4">
           <div className="flex min-w-0 items-center gap-3">
@@ -982,7 +982,7 @@ export default function DeveloperPlatform() {
           </button>
         </div>
 
-        
+
 
         {sidebarOpen && (
           <div className="mt-3 px-4">
@@ -1227,6 +1227,15 @@ export default function DeveloperPlatform() {
                   ))}
                 </div>
                 <div className="flex items-center gap-2">
+                  <button onClick={() => runCommand(runtime?.install_command || "npm install")} className={cx("flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>
+                    <Terminal size={16} /> Install
+                  </button>
+                  <button onClick={() => runCommand(runtime?.dev_command || "npm run dev")} className={cx("flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>
+                    <Play size={16} /> Run dev
+                  </button>
+                  <button onClick={() => runCommand(runtime?.test_command || "npm test -- --watch=false")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Test</button>
+                  <button onClick={() => runCommand(runtime?.build_command || "npm run build")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Build</button>
+                  <button onClick={() => runCommand(runtime?.lint_command || "npm run lint")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Debug</button>
                   <button onClick={stopRuntime} disabled={!runtime || runtime.status === "stopped"} className={cx("flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm disabled:opacity-40", p.inverseButton)}>
                     <Power size={16} /> Stop
                   </button>
