@@ -502,6 +502,7 @@ export default function DeveloperPlatform() {
         setProject(currentRes.data.project || null);
         setChat(currentRes.data.chat || null);
         setScreen("workspace");
+        setRightView("preview");
         refreshWorkspace(currentRes.data.workspace.id);
       }
     } catch (e) {}
@@ -661,6 +662,7 @@ export default function DeveloperPlatform() {
     setProject(workspaceDoc.project || null);
     setChat(workspaceDoc.chat || null);
     setScreen("workspace");
+    setRightView("preview");
     await refreshWorkspace(workspaceDoc.id);
   };
 
@@ -812,7 +814,6 @@ export default function DeveloperPlatform() {
     try {
       const res = await api.put(`/workspaces/${workspace.id}/files/${encodePath(selectedPath)}`, { content: editorValue });
       setFile(res.data);
-      await runBuildCheck("manual file save");
       await refreshWorkspace(workspace.id);
       toast.success("Saved");
     } catch (err) {
@@ -1226,15 +1227,6 @@ export default function DeveloperPlatform() {
                   ))}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => runCommand(runtime?.install_command || "npm install")} className={cx("flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>
-                    <Terminal size={16} /> Install
-                  </button>
-                  <button onClick={() => runCommand(runtime?.dev_command || "npm run dev")} className={cx("flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>
-                    <Play size={16} /> Run dev
-                  </button>
-                  <button onClick={() => runCommand(runtime?.test_command || "npm test -- --watch=false")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Test</button>
-                  <button onClick={() => runCommand(runtime?.build_command || "npm run build")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Build</button>
-                  <button onClick={() => runCommand(runtime?.lint_command || "npm run lint")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Debug</button>
                   <button onClick={stopRuntime} disabled={!runtime || runtime.status === "stopped"} className={cx("flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm disabled:opacity-40", p.inverseButton)}>
                     <Power size={16} /> Stop
                   </button>
