@@ -911,6 +911,13 @@ export default function DeveloperPlatform() {
     setVercelOpen(true);
   };
 
+  const handleSetRightView = (view) => {
+    setRightView(view);
+    if (view === "preview" && (!runtime || runtime.status === "stopped")) {
+      runCommand(runtime?.dev_command || "npm run dev");
+    }
+  };
+
   const connectVercel = async () => {
     try {
       const returnUrl = window.location.origin + "/api/vercel/install/callback";
@@ -1237,7 +1244,7 @@ export default function DeveloperPlatform() {
               <div className={cx("flex h-11 items-center justify-between border-b px-4", p.side)}>
                 <div className={cx("flex items-center gap-1 rounded-md border p-1", p.panelSoft)}>
                   {[["preview", Eye], ["editor", Code], ["logs", Terminal], ["diffs", List]].map(([view, Icon]) => (
-                    <button key={view} onClick={() => setRightView(view)} className={cx("grid h-8 w-9 place-items-center rounded", rightView === view && p.active)} title={view}>
+                    <button key={view} onClick={() => handleSetRightView(view)} className={cx("grid h-8 w-9 place-items-center rounded", rightView === view && p.active)} title={view}>
                       <Icon size={18} />
                     </button>
                   ))}
