@@ -330,6 +330,24 @@ html, body, #root {
   background: rgba(199, 255, 74, .07);
   animation-delay: -2s;
 }
+.aw-setup-shell .aw-bg-grid {
+  opacity: .12;
+  mask-image: radial-gradient(circle at 50% 42%, #000 0, transparent 60%);
+}
+.aw-setup-shell .aw-glow {
+  animation: none;
+}
+.aw-setup-shell .aw-glow-a {
+  top: -220px;
+  left: calc(50% - 260px);
+  width: 520px;
+  height: 320px;
+  background: rgba(73, 232, 202, .06);
+  opacity: .55;
+}
+.aw-setup-shell .aw-glow-b {
+  display: none;
+}
 .aw-glass-card {
   border: 1px solid rgba(255,255,255,.105);
   background:
@@ -350,15 +368,17 @@ html, body, #root {
 .aw-flow-card {
   display: flex;
   align-items: center;
-  gap: 20px;
-  border-radius: 16px;
-  border: 1px solid rgba(255,255,255,.11);
-  background: linear-gradient(145deg, rgba(255,255,255,.04), rgba(255,255,255,.015));
-  padding: 24px 22px;
+  gap: 12px;
+  min-height: 92px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.018);
+  padding: 14px;
 }
 .aw-flow-card-active {
-  border-color: #c7ff4a;
-  box-shadow: 0 0 70px rgba(199,255,74,.12);
+  border-color: rgba(73,232,202,.42);
+  background: rgba(73,232,202,.035);
+  box-shadow: 0 12px 36px rgba(0,0,0,.18);
 }
 .aw-reveal {
   opacity: 0;
@@ -398,6 +418,36 @@ html, body, #root {
   width: 138px;
   height: 138px;
 }
+.aw-bot-orbit-compact {
+  width: 104px;
+  height: 104px;
+  box-shadow: 0 0 48px rgba(73,232,202,.1);
+}
+.aw-bot-orbit-compact::before {
+  inset: 10px;
+}
+.aw-bot-orbit-compact::after {
+  inset: 24px;
+}
+.aw-bot-orbit-compact .aw-robot {
+  transform: scale(.68);
+}
+.aw-flow-shell .aw-bg-grid {
+  opacity: .08;
+}
+.aw-flow-shell .aw-glow {
+  animation: none;
+}
+.aw-flow-shell .aw-glow-a {
+  top: -240px;
+  left: calc(50% - 250px);
+  width: 500px;
+  height: 320px;
+  background: rgba(73,232,202,.045);
+}
+.aw-flow-shell .aw-glow-b {
+  display: none;
+}
 .aw-robot {
   position: relative;
   z-index: 2;
@@ -406,6 +456,36 @@ html, body, #root {
 }
 .aw-robot-large {
   transform: scale(1.14);
+}
+.aw-robot-clean {
+  height: 90px;
+}
+.aw-robot-clean .aw-robot-screen {
+  top: 17px;
+}
+.aw-robot-clean .aw-robot-ear {
+  top: 33px;
+}
+.aw-robot-clean .aw-eye {
+  top: 28px;
+  width: 6px;
+  height: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: #49e8ca;
+}
+.aw-robot-clean .aw-eye:first-child {
+  left: 22px;
+}
+.aw-robot-clean .aw-eye:nth-child(2) {
+  right: 22px;
+}
+.aw-robot-clean .aw-smile {
+  left: 31px;
+  top: 42px;
+  width: 18px;
+  height: 7px;
+  border-bottom-width: 2px;
 }
 .aw-robot-antenna {
   position: absolute;
@@ -495,6 +575,7 @@ html, body, #root {
 }
 .aw-timeline-line {
   position: absolute;
+  z-index: 0;
   left: 37px;
   top: 28px;
   bottom: 28px;
@@ -516,16 +597,100 @@ html, body, #root {
 }
 .aw-side-link {
   display: flex;
-  height: 50px;
+  height: 38px;
   width: 100%;
   align-items: center;
-  gap: 14px;
-  border-radius: 12px;
-  padding: 0 13px;
+  gap: 11px;
+  border-radius: 10px;
+  padding: 0 11px;
   text-align: left;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: rgba(255,255,255,.84);
+}
+.aw-build-shell .aw-bg-grid,
+.aw-dashboard-shell .aw-bg-grid {
+  opacity: .07;
+}
+.aw-build-shell .aw-glow,
+.aw-dashboard-shell .aw-glow {
+  animation: none;
+  opacity: .28;
+}
+.aw-build-shell .aw-glow-b,
+.aw-dashboard-shell .aw-glow-b {
+  display: none;
+}
+.aw-build-shell .aw-glass-card,
+.aw-dashboard-shell .aw-glass-card {
+  border-color: rgba(255,255,255,.075);
+  background: rgba(5,10,11,.72);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 14px 40px rgba(0,0,0,.12);
+  backdrop-filter: blur(12px);
+}
+.aw-dashboard-shell main > section > h1,
+.aw-dashboard-shell main > div > div:first-child h1 {
+  font-family: "Manrope", "Inter", sans-serif;
+}
+.aw-dashboard-shell section h1,
+.aw-dashboard-shell main > div h1 {
+  font-size: 27px;
+  line-height: 1.15;
+  letter-spacing: -.035em;
+}
+.aw-dashboard-shell section h1 + p,
+.aw-dashboard-shell main > div h1 + p {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(255,255,255,.46);
+}
+.aw-dashboard-shell .aw-glass-card {
+  border-radius: 12px;
+  padding: 15px;
+}
+.aw-dashboard-shell main > section > div:first-child,
+.aw-dashboard-shell main > div > div:first-child {
+  margin-bottom: 24px;
+}
+.aw-dashboard-shell main > section > div[class*="grid"],
+.aw-dashboard-shell main > div > div[class*="grid"] {
+  gap: 14px;
+}
+.aw-dashboard-shell .aw-growth-command > div:first-child {
+  margin-bottom: 0;
+}
+.aw-dashboard-shell .aw-bot-orbit-small {
+  width: 118px;
+  height: 118px;
+  background: none;
+  box-shadow: none;
+}
+.aw-dashboard-shell .aw-bot-orbit-small .aw-robot {
+  transform: none;
+}
+.aw-dashboard-shell .aw-bot-orbit-small::before,
+.aw-dashboard-shell .aw-bot-orbit-small::after {
+  display: none;
+}
+@media (min-width: 1024px) {
+  .aw-dashboard-main {
+    width: calc(100% - 220px);
+    margin-left: 220px;
+    margin-right: 0;
+  }
+}
+.aw-build-shell .aw-timeline-line {
+  left: 28px;
+  top: 18px;
+  bottom: 18px;
+  opacity: .55;
+}
+@media (max-width: 640px) {
+  .aw-dashboard-shell section h1,
+  .aw-dashboard-shell main > div h1 {
+    font-size: 26px;
+  }
 }
 .aw-side-link:hover {
   background: rgba(255,255,255,.055);

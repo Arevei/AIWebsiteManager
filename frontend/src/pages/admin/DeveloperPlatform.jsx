@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
-import { Link, useLocation } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   ArrowUp,
@@ -21,18 +21,22 @@ import {
   List,
   MagnifyingGlass,
   Microphone,
-  Moon,
   PaperPlaneTilt,
   Play,
   Plus,
   RocketLaunch,
+  Robot,
   ArrowSquareOut,
+  Brain,
+  Calendar,
+  GearSix,
   SidebarSimple,
+  Sparkle,
   SpinnerGap,
   SquaresFour,
-  Sun,
   Terminal,
   Trash,
+  TrendUp,
   X,
 } from "@phosphor-icons/react";
 import { API, api, getToken } from "../../lib/api";
@@ -40,12 +44,15 @@ import { useAuth } from "../../lib/auth";
 import { useTheme } from "../../lib/theme";
 
 const ADMIN_NAV = [
-  { to: "/admin", label: "Dashboard", icon: GridFour },
-  { to: "/admin/dev", label: "AI Workspace", icon: Code },
-  { to: "/admin/agent", label: "Agent", icon: Terminal },
-  { to: "/admin?view=growth", label: "Growth", icon: GridFour },
-  { to: "/admin?view=settings", label: "Settings", icon: GridFour },
+  { to: "/admin", label: "Dashboard", icon: House },
+  { to: "/admin/dev", label: "AI Workspace", icon: Sparkle },
+  { to: "/admin/agent", label: "Manager", icon: Robot },
+  { to: "/admin?view=meetings", label: "Meetings", icon: Calendar },
+  { to: "/admin?view=brain", label: "Brain", icon: Brain },
+  { to: "/admin?view=growth", label: "Growth", icon: TrendUp },
+  { to: "/admin?view=settings", label: "Settings", icon: GearSix },
 ];
+const AREVEI_LOGO = "/arevei-logo-mark.png";
 
 function encodePath(path) {
   return path.split("/").map(encodeURIComponent).join("/");
@@ -68,18 +75,18 @@ function palette(theme) {
   const dark = theme === "dark";
   return {
     dark,
-    app: dark ? "bg-black text-white" : "bg-[#f7f7f4] text-[#111]",
-    side: dark ? "bg-black border-[#202020]" : "bg-[#fbfbf8] border-[#deded8]",
-    panel: dark ? "bg-[#0b0b0b] border-[#202020]" : "bg-white border-[#deded8]",
-    panelSoft: dark ? "bg-[#151515] border-[#303030]" : "bg-[#f1f1ec] border-[#d8d8d0]",
-    hover: dark ? "hover:bg-[#171717]" : "hover:bg-[#ecece5]",
-    active: dark ? "bg-[#2b2b2b] text-white" : "bg-[#e7e7df] text-[#111]",
-    muted: dark ? "text-[#a7a7a7]" : "text-[#686868]",
-    faint: dark ? "text-[#777]" : "text-[#898981]",
-    input: dark ? "bg-[#151515] border-[#333] text-white placeholder:text-[#8d8d8d]" : "bg-white border-[#d5d5cc] text-[#111] placeholder:text-[#8a8a84]",
-    button: dark ? "bg-white text-black" : "bg-black text-white",
-    inverseButton: dark ? "border-[#333] text-[#cfcfcf]" : "border-[#d7d7cf] text-[#333]",
-    codeBg: dark ? "bg-[#050505]" : "bg-[#fcfcf9]",
+    app: dark ? "bg-[#030607] text-white" : "bg-[#f7f7f4] text-[#111]",
+    side: dark ? "bg-[#050a0a] border-white/[.07]" : "bg-[#fbfbf8] border-[#deded8]",
+    panel: dark ? "bg-[#07100f] border-white/[.08]" : "bg-white border-[#deded8]",
+    panelSoft: dark ? "bg-white/[.035] border-white/[.08]" : "bg-[#f1f1ec] border-[#d8d8d0]",
+    hover: dark ? "hover:bg-white/[.045]" : "hover:bg-[#ecece5]",
+    active: dark ? "bg-[#49e8ca12] text-[#49e8ca]" : "bg-[#e7e7df] text-[#111]",
+    muted: dark ? "text-white/55" : "text-[#686868]",
+    faint: dark ? "text-white/32" : "text-[#898981]",
+    input: dark ? "bg-white/[.025] border-white/[.09] text-white placeholder:text-white/28" : "bg-white border-[#d5d5cc] text-[#111] placeholder:text-[#8a8a84]",
+    button: dark ? "bg-[#49e8ca] text-[#032c25]" : "bg-black text-white",
+    inverseButton: dark ? "border-white/[.09] text-white/62" : "border-[#d7d7cf] text-[#333]",
+    codeBg: dark ? "bg-[#030606]" : "bg-[#fcfcf9]",
   };
 }
 
@@ -91,35 +98,17 @@ function IconButton({ children, title, onClick, className = "" }) {
   );
 }
 
-function SidebarItem({ icon: Icon, label, active, collapsed, theme, onClick }) {
-  const p = palette(theme);
-  return (
-    <button
-      onClick={onClick}
-      title={collapsed ? label : undefined}
-      className={cx(
-        "flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm",
-        active ? p.active : `${p.muted} ${p.hover}`,
-        collapsed && "justify-center px-0"
-      )}
-    >
-      <Icon size={20} />
-      {!collapsed && <span>{label}</span>}
-    </button>
-  );
-}
-
 function PromptBox({ value, setValue, onSubmit, disabled, theme, compact, mode, setMode, openImport }) {
   const p = palette(theme);
   return (
-    <form onSubmit={onSubmit} className={cx("rounded-xl border shadow-[0_16px_60px_rgba(0,0,0,.25)]", p.input, compact ? "p-2" : "p-4")}>
+    <form onSubmit={onSubmit} className={cx("rounded-xl border shadow-[0_16px_45px_rgba(0,0,0,.14)]", p.input, compact ? "p-2" : "p-4")}>
       {!compact && (
-        <div className={cx("mb-3 flex w-fit rounded-lg border p-1", p.panelSoft)}>
-          <button type="button" onClick={() => setMode("chat")} className={cx("rounded-md px-3 py-1.5 text-sm", mode === "chat" ? p.button : p.muted)}>
-            Normal chat
+        <div className={cx("mb-3 grid w-full max-w-[460px] grid-cols-2 rounded-lg border p-1", p.panelSoft)}>
+          <button type="button" onClick={() => setMode("chat")} className={cx("rounded-md px-3 py-2 text-left", mode === "chat" ? p.button : p.muted)}>
+            <span className="block text-xs font-semibold">Normal Chat</span><span className="mt-0.5 block text-[9px] opacity-65">Analysis and planning</span>
           </button>
-          <button type="button" onClick={() => setMode("project")} className={cx("rounded-md px-3 py-1.5 text-sm", mode === "project" ? p.button : p.muted)}>
-            Project build
+          <button type="button" onClick={() => setMode("project")} className={cx("rounded-md px-3 py-2 text-left", mode === "project" ? p.button : p.muted)}>
+            <span className="block text-xs font-semibold">Project Build</span><span className="mt-0.5 block text-[9px] opacity-65">Website implementation</span>
           </button>
         </div>
       )}
@@ -437,8 +426,7 @@ function DiffList({ changes, onApply, onOpenFile, theme }) {
 
 export default function DeveloperPlatform() {
   const { user, logout } = useAuth();
-  const { theme, toggle: toggleTheme } = useTheme();
-  const location = useLocation();
+  const { theme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem("arevei_sidebar_open") !== "false");
   const [searchQuery, setSearchQuery] = useState("");
   const [homeMode, setHomeMode] = useState("chat");
@@ -1071,140 +1059,72 @@ export default function DeveloperPlatform() {
     }
   };
 
-  const sideWidth = sidebarOpen ? "w-[342px]" : "w-[72px]";
+  const sideWidth = sidebarOpen ? "w-[260px]" : "w-0";
 
   return (
     <div className={cx("fixed inset-0 flex overflow-hidden", p.app)}>
-
-      <aside className={cx("flex shrink-0 flex-col border-r transition-all", sideWidth, p.side)}>
-        <div className="flex h-14 items-center justify-between px-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#d8f7ff] to-[#9575ff] text-xs font-bold text-black">
-              {(user?.name || user?.email || "A").slice(0, 1).toUpperCase()}
-            </div>
-            {sidebarOpen && <div className="truncate font-semibold">Personal</div>}
-          </div>
-          <div className="flex items-center gap-2">
-            {sidebarOpen && <CaretDown size={16} className={p.muted} />}
-            <IconButton title="Toggle sidebar" onClick={() => setSidebarOpen((value) => !value)} className={cx(p.muted, p.hover)}>
-              <SidebarSimple size={18} />
-            </IconButton>
+      <aside className="hidden w-[220px] shrink-0 flex-col border-r border-white/[.07] bg-[#030908] px-4 py-5 lg:flex">
+        <img src={AREVEI_LOGO} alt="Arevei" className="h-7 w-auto max-w-full shrink-0 self-start object-contain object-left" />
+        <nav className="mt-8 space-y-1">
+          {ADMIN_NAV.map(({ to, label, icon: Icon }) => (
+            <Link key={to} to={to} className={cx("flex h-[38px] items-center gap-3 rounded-[10px] px-3 text-[13px] font-medium transition-colors", to === "/admin/dev" ? "bg-[#49e8ca12] text-[#49e8ca]" : "text-white/70 hover:bg-white/[.045] hover:text-white")}>
+              <Icon size={19} /> {label}
+            </Link>
+          ))}
+        </nav>
+        <div className="mt-auto rounded-xl border border-white/[.08] p-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#49e8ca] text-[11px] font-bold text-[#032c25]">{(user?.name || user?.email || "A").slice(0, 1).toUpperCase()}</div>
+            <div className="min-w-0 flex-1"><div className="truncate text-xs font-medium">{user?.name || "Account"}</div><div className="mt-0.5 truncate text-[10px] text-white/32">{user?.email}</div></div>
+            <button onClick={logout} title="Sign out" className="text-[10px] text-white/30 hover:text-white/60">Exit</button>
           </div>
         </div>
+      </aside>
 
-        <div className="px-2">
-          <button onClick={newChat} className={cx("flex h-11 w-full items-center justify-center gap-2 rounded-md text-sm font-semibold", p.panelSoft, p.hover)}>
-            <Plus size={18} />
-            {sidebarOpen && "New Chat"}
-          </button>
-        </div>
-
-
-
+      <aside className={cx("relative hidden shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 md:flex", sideWidth, p.side)}>
         {sidebarOpen && (
-          <div className="mt-3 px-4">
-            <div className={cx("mb-2 flex h-8 items-center gap-2 rounded-md border px-2", p.input)}>
-              <MagnifyingGlass size={16} className={p.faint} />
-              <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search chats" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+          <>
+            <div className="flex h-14 items-center justify-between px-4">
+              <div><div className="text-sm font-semibold">AI Workspace</div><div className={cx("mt-0.5 text-[10px]", p.faint)}>Conversation history</div></div>
+              <IconButton title="Collapse history" onClick={() => setSidebarOpen(false)} className={cx(p.muted, p.hover)}><SidebarSimple size={18} /></IconButton>
             </div>
-            <div className="space-y-2">
-              <div>
-                <div className={cx("mb-1 flex justify-between text-[11px]", p.faint)}><span>Workspaces</span><span>{recentWorkspaces.length}/20</span></div>
-                <div className={cx("h-1.5 overflow-hidden rounded-full", p.panelSoft)}><div className="h-full bg-[#0d9f7c]" style={{ width: `${workspaceUsage}%` }} /></div>
+            <div className="px-3">
+              <button onClick={newChat} className="flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-[#49e8ca] text-xs font-semibold text-[#032c25]"><Plus size={16} /> New Chat</button>
+              <div className={cx("mt-3 flex h-8 items-center gap-2 rounded-lg border px-2.5", p.input)}><MagnifyingGlass size={14} className={p.faint} /><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search conversations" className="min-w-0 flex-1 bg-transparent text-xs outline-none" /></div>
+            </div>
+            <div className="mt-6 flex min-h-0 flex-1 flex-col px-2">
+              <div className={cx("mb-2 px-2 text-[10px] font-medium uppercase tracking-[.14em]", p.faint)}>Recent</div>
+              <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                {recentLoading && <div className={cx("flex items-center gap-2 px-3 py-2 text-xs", p.faint)}><SpinnerGap className="animate-spin" /> Loading…</div>}
+                {recentItems.map((item) => (
+                  <button key={`${item.listKind}-${item.id}`} onClick={() => (item.listKind === "chat" ? openGeneralChat(item) : openWorkspace(item))} className={cx("group flex min-h-10 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs", p.muted, p.hover)}>
+                    {item.listKind === "chat" ? <ChatCircle size={15} className="shrink-0" /> : <Code size={15} className="shrink-0" />}
+                    <span className="min-w-0 flex-1 truncate">{item.listKind === "chat" ? item.title : workspaceTitle(item)}</span>
+                    <span role="button" tabIndex={0} onClick={(event) => deleteRecentItem(event, item)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") deleteRecentItem(event, item); }} title="Delete" className={cx("hidden h-6 w-6 shrink-0 place-items-center rounded group-hover:grid", p.hover)}><Trash size={13} /></span>
+                  </button>
+                ))}
               </div>
-              <div>
-                <div className={cx("mb-1 flex justify-between text-[11px]", p.faint)}><span>Agent usage</span><span>{agentUsage}%</span></div>
-                <div className={cx("h-1.5 overflow-hidden rounded-full", p.panelSoft)}><div className="h-full bg-[#8b5cf6]" style={{ width: `${agentUsage}%` }} /></div>
-              </div>
             </div>
-          </div>
-        )}
-
-        {sidebarOpen && (
-          <div className="mt-8 flex min-h-0 flex-1 flex-col px-2">
-            <div className={cx("mb-3 flex items-center justify-between px-2 text-sm font-semibold", p.muted)}>
-              Recent Chats <CaretDown size={14} />
+            <div className="border-t border-white/[.06] px-4 py-3">
+              <div className={cx("flex justify-between text-[10px]", p.faint)}><span>Workspace usage</span><span>{recentWorkspaces.length}/20</span></div>
+              <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/[.05]"><div className="h-full bg-[#49e8ca]" style={{ width: `${workspaceUsage}%` }} /></div>
+              <div className={cx("mt-3 flex justify-between text-[10px]", p.faint)}><span>Agent usage</span><span>{agentUsage}%</span></div>
+              <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/[.05]"><div className="h-full bg-white/20" style={{ width: `${agentUsage}%` }} /></div>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-              {recentLoading && <div className={cx("flex items-center gap-2 px-3 py-2 text-xs", p.faint)}><SpinnerGap className="animate-spin" /> Loading recent...</div>}
-              {recentItems.map((item) => (
-                <button
-                  key={`${item.listKind}-${item.id}`}
-                  onClick={() => (item.listKind === "chat" ? openGeneralChat(item) : openWorkspace(item))}
-                  className={cx("group flex min-h-11 w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm", p.muted, p.hover)}
-                >
-                  <span className="h-4 w-4 rounded-full border border-dashed border-current" />
-                  <span className="truncate">{item.listKind === "chat" ? item.title : workspaceTitle(item)}</span>
-                  <span className={cx("ml-auto text-[10px] uppercase", p.faint)}>{item.listKind}</span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(event) => deleteRecentItem(event, item)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") deleteRecentItem(event, item);
-                    }}
-                    title="Delete"
-                    className={cx("hidden h-7 w-7 shrink-0 place-items-center rounded group-hover:grid", p.hover)}
-                  >
-                    <Trash size={15} />
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className={cx("m-2 rounded-xl border p-3", p.panelSoft)}>
-          {sidebarOpen ? (
-            <>
-              <div className="font-semibold">Appearance</div>
-              <button onClick={toggleTheme} className={cx("mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-md border text-sm font-semibold", p.inverseButton)}>
-                {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />} {theme === "dark" ? "Light mode" : "Dark mode"}
-              </button>
-            </>
-          ) : (
-            <IconButton title="Toggle theme" onClick={toggleTheme} className={cx("mx-auto", p.hover)}>
-              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-            </IconButton>
-          )}
-        </div>
-
-        {sidebarOpen && (
-          <div className={cx("flex h-14 items-center justify-between border-t px-4", p.side)}>
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="grid h-7 w-7 place-items-center rounded-full bg-[#c9e7ff] text-xs font-bold text-black">
-                {(user?.email || "a").slice(0, 1).toUpperCase()}
-              </div>
-              <span className={cx("truncate text-sm", p.muted)}>{user?.email}</span>
-            </div>
-            <button onClick={logout} className={cx("rounded-md border px-3 py-1 text-sm", p.inverseButton)}>Sign out</button>
-          </div>
+          </>
         )}
       </aside>
 
       {screen === "home" ? (
         <main className="relative flex flex-1 flex-col">
           <header className={cx("flex h-14 shrink-0 items-center justify-between border-b px-5", p.side)}>
-            
             <div className="flex min-w-0 items-center gap-3">
-              <nav className="hidden max-w-[760px] items-center gap-1  lg:flex">
-                {ADMIN_NAV.map(({ to, label, icon: Icon }) => (
-                  <Link
-                    key={to}
-                    to={to}
-                    className={cx(
-                      "flex h-7 shrink-0 items-center gap-1.5 rounded px-2 text-[11px]",
-                      (`${location.pathname}${location.search}` === to || (to === "/admin" && location.pathname === "/admin" && !location.search) || (to !== "/admin" && location.pathname.startsWith(to))) ? p.active : `${p.muted} ${p.hover}`
-                    )}
-                  >
-                    <Icon size={13} />
-                    <span>{label}</span>
-                  </Link>
-                ))}
-              </nav>
-              <IconButton title="Toggle theme" onClick={toggleTheme} className={cx("border", p.inverseButton)}>
-                {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-              </IconButton>
+              {!sidebarOpen && <IconButton title="Open history" onClick={() => setSidebarOpen(true)} className={cx(p.muted, p.hover)}><SidebarSimple size={18} /></IconButton>}
+              <div><div className="text-sm font-semibold">AI Workspace</div><div className={cx("mt-0.5 hidden text-[10px] sm:block", p.faint)}>Build, manage and improve your website with AREVEI.</div></div>
+            </div>
+            <div className="flex items-center gap-2 text-[10px]">
+              <span className="hidden rounded-full border border-white/[.07] px-2.5 py-1 text-white/38 sm:inline-flex">Website · {workspace?.repo_full_name || "Ready"}</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[#49e8ca20] bg-[#49e8ca08] px-2.5 py-1 text-[#49e8ca]"><span className="h-1.5 w-1.5 rounded-full bg-[#49e8ca]" /> AI Ready</span>
             </div>
           </header>
           {normalMessages.length > 0 && (
@@ -1223,9 +1143,15 @@ export default function DeveloperPlatform() {
           <div className={cx("flex flex-1 items-center justify-center", normalMessages.length > 0 && "flex-none pb-8")}>
             <div className="w-full max-w-[864px] px-6">
               {normalMessages.length === 0 && (
-                <h1 className="mb-7 text-center text-[38px] font-bold tracking-[-.02em]">
-                  {homeMode === "chat" ? "What do you want to know?" : "What do you want to create?"}
-                </h1>
+                <div className="mb-7 text-center">
+                  <h1 className="text-[30px] font-semibold tracking-[-.035em]">What should we work on?</h1>
+                  <p className={cx("mt-2 text-sm", p.muted)}>Ask AREVEI to build, fix, update or improve your website.</p>
+                  <div className="mt-5 flex flex-wrap justify-center gap-2">
+                    {["Update homepage", "Fix an issue", "Improve SEO", "Build a new section"].map((item) => (
+                      <button key={item} onClick={() => { setPrompt(item); if (item === "Update homepage" || item === "Build a new section") setHomeMode("project"); }} className={cx("rounded-full border px-3 py-1.5 text-[11px]", p.inverseButton, p.hover)}>{item}</button>
+                    ))}
+                  </div>
+                </div>
               )}
               <PromptBox
                 value={normalMessages.length > 0 ? followUp : prompt}
@@ -1242,41 +1168,22 @@ export default function DeveloperPlatform() {
         </main>
       ) : (
         <main className="flex min-w-0 flex-1 flex-col">
-          <div className={cx("flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b px-2", p.side)}>
-            {ADMIN_NAV.map(({ to, label, icon: Icon }) => (
-              <Link
-                key={to}
-                to={to}
-                className={cx(
-                  "flex h-6 shrink-0 items-center gap-1.5 rounded px-2 text-[11px]",
-                  (`${location.pathname}${location.search}` === to || (to === "/admin" && location.pathname === "/admin" && !location.search) || (to !== "/admin" && location.pathname.startsWith(to))) ? p.active : `${p.muted} ${p.hover}`
-                )}
-              >
-                <Icon size={13} />
-                <span>{label}</span>
-              </Link>
-            ))}
-          </div>
           <header className={cx("flex h-12 shrink-0 items-center justify-between border-b px-4", p.side)}>
             <div className="flex min-w-0 items-center gap-3">
-              <button onClick={newChat} className={p.faint}><House size={19} /></button>
+              {!sidebarOpen && <button onClick={() => setSidebarOpen(true)} className={p.faint}><SidebarSimple size={19} /></button>}
+              <button onClick={newChat} className={p.faint}><House size={18} /></button>
               <div className="min-w-0">
-                <div className={cx("font-mono text-xs uppercase tracking-[.18em]", p.faint)}>
-                  {workspace?.repo_full_name || "Project workspace"} / {workspace?.branch || "main"}
-                </div>
                 <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-semibold">{shortName(currentTitle, 48)}</span>
+                  <span className="truncate text-sm font-semibold">AI Workspace · {shortName(currentTitle, 42)}</span>
                   <CaretDown size={14} className={p.faint} />
                 </div>
+                <div className={cx("mt-0.5 font-mono text-[9px] uppercase tracking-[.12em]", p.faint)}>{workspace?.repo_full_name || "Project workspace"} · {workspace?.branch || "main"} · Connected</div>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setVercelOpen(true)} disabled={!workspace} className={cx("flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium disabled:opacity-40", p.inverseButton)}>
                 <RocketLaunch size={15} /> Deploy
               </button>
-              <IconButton title="Toggle theme" onClick={toggleTheme} className={cx("border", p.inverseButton)}>
-                {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-              </IconButton>
               <button onClick={() => setCommitOpen(true)} disabled={loading || !workspace} className={cx("flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium disabled:opacity-40", p.inverseButton)}>
                 <GitCommit size={15} /> Commit
               </button>

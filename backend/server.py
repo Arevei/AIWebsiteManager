@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import certifi
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
@@ -19,6 +20,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 from auth import create_token, current_user, hash_password, require_super_admin, verify_password
 from ai_engine import apply_tool_calls, run_ai
+from agent_engine import _ask_json
 from models import (
     AIActionLog,
     AIChatRequest,
@@ -49,7 +51,7 @@ if os.environ.get("USE_MOCK_DB", "").lower() == "true":
     mongo_client = AsyncMongoMockClient()
     logger.info("Using in-memory mock MongoDB")
 else:
-    mongo_client = AsyncIOMotorClient(mongo_url)
+    mongo_client = AsyncIOMotorClient(mongo_url, tlsCAFile=certifi.where())
 db = mongo_client[os.environ["DB_NAME"]]
 logger.info(
     "Mongo persistence configured: mock=%s db=%s host=%s",
@@ -600,6 +602,112 @@ async def put_brain(payload: dict, user=Depends(current_user)):
     await db.company_brains.update_one(
         {"tenant_id": user["tenant_id"]}, {"$set": payload}, upsert=True)
     return await db.company_brains.find_one({"tenant_id": user["tenant_id"]}, {"_id": 0})
+
+
+@api.post("/dashboard-assistant/chat")
+async def dashboard_assistant_chat(payload: dict, user=Depends(current_user)):
+    """Read-only tenant assistant. It may update allowlisted Brain fields, never website or repo data."""
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    tenant_id = user["tenant_id"]
+    site = await db.sites.find_one({"tenant_id": tenant_id}, {"_id": 0}) or {}
+    brain = await db.company_brains.find_one({"tenant_id": tenant_id}, {"_id": 0}) or {}
+    workspace = await db.workspace_sessions.find_one(
+        {"tenant_id": tenant_id}, {"_id": 0}, sort=[("updated_at", -1)]
+    ) or {}
+    knowledge = {}
+    if workspace.get("id"):
+        knowledge = await db.workspace_knowledge.find_one(
+            {"workspace_id": workspace["id"], "tenant_id": tenant_id}, {"_id": 0}
+        ) or {}
+
+    database_context = {
+        "pages": len(site.get("pages", [])),
+        "team_members": await db.users.count_documents({"tenant_id": tenant_id}),
+        "tasks": await db.tasks.count_documents({"tenant_id": tenant_id}),
+        "agent_actions": await db.agent_actions.count_documents({"tenant_id": tenant_id}),
+        "roadmaps": await db.roadmaps.count_documents({"tenant_id": tenant_id}),
+        "recent_actions": await db.agent_actions.find(
+            {"tenant_id": tenant_id}, {"_id": 0, "tenant_id": 0}
+        ).sort("created_at", -1).limit(8).to_list(8),
+    }
+    context = {
+        "brain": brain,
+        "site": {
+            "slug": site.get("slug"),
+            "domain": site.get("domain"),
+            "seo": site.get("seo", {}),
+            "pages": [
+                {"slug": page.get("slug"), "section_ids": [s.get("id") for s in page.get("sections", [])]}
+                for page in site.get("pages", [])[:30]
+            ],
+        },
+        "repository": {
+            "name": workspace.get("repo_full_name") or workspace.get("name"),
+            "branch": workspace.get("branch"),
+            "structure": knowledge.get("repository_structure", {}),
+            "components": knowledge.get("component_graph", [])[:30],
+            "routes": knowledge.get("page_graph", [])[:30],
+            "apis": knowledge.get("api_graph", [])[:30],
+            "symbols": knowledge.get("symbol_index", [])[:40],
+            "memory": knowledge.get("memory", {}),
+        },
+        "database": database_context,
+    }
+    history = [
+        {
+            "role": item.get("role"),
+            "content": str(item.get("content") or "")[:1600],
+        }
+        for item in (payload.get("history") or [])[-10:]
+        if item.get("role") in {"user", "assistant"}
+    ]
+    system = (
+        "You are Arevei's dashboard assistant. Answer questions using the supplied tenant Brain, website, "
+        "repository index, and database summary. You are strictly read-only for website files, repository files, "
+        "site content, SEO, settings, tasks, and all database records. Never claim to edit, apply, publish, run, "
+        "commit, or change the website. If asked to change the website, explain that Command+K is read-only and "
+        "direct the user to AI Workspace. You may update Brain information only when the user explicitly asks. "
+        "Allowed Brain keys are business_description, target_audience, brand_voice, goals, and competitors. "
+        "Return JSON with {\"answer\": string, \"brain_updates\": object}. brain_updates must be empty unless the "
+        "request explicitly asks to update Brain information. Keep answers concise and useful."
+    )
+    result = await _ask_json(
+        f"dashboard-assistant-{tenant_id}-{user['user_id']}",
+        system,
+        json.dumps({"message": message, "history": history, "context": context}, default=str)[:24000],
+    )
+    answer = str(result.get("answer") or "").strip()
+    if not answer:
+        answer = (
+            "I can answer questions about your website repository, indexed knowledge, business Brain, and "
+            "workspace data. Website changes remain disabled here; use AI Workspace when you want to edit the site."
+        )
+
+    allowed_brain_keys = {"business_description", "target_audience", "brand_voice", "goals", "competitors"}
+    requested_updates = result.get("brain_updates") if isinstance(result.get("brain_updates"), dict) else {}
+    brain_updates = {
+        key: str(value).strip()[:4000]
+        for key, value in requested_updates.items()
+        if key in allowed_brain_keys and str(value).strip()
+    }
+    updated_brain = None
+    if brain_updates:
+        brain_updates["last_updated"] = now_iso()
+        brain_updates["tenant_id"] = tenant_id
+        await db.company_brains.update_one(
+            {"tenant_id": tenant_id}, {"$set": brain_updates}, upsert=True
+        )
+        updated_brain = await db.company_brains.find_one({"tenant_id": tenant_id}, {"_id": 0})
+
+    return {
+        "answer": answer,
+        "brain_updated": bool(updated_brain),
+        "brain": updated_brain,
+        "read_only": True,
+    }
 
 
 @api.get("/")

@@ -2,24 +2,39 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "../../lib/api";
+import { useAuth } from "../../lib/auth";
 import {
   ArrowRight,
   Bell,
   Brain,
+  Calendar,
   CheckCircle,
   FileText,
   GearSix,
   GitBranch,
+  Headset,
+  House,
   Lightning,
   ListChecks,
   PlayCircle,
   Plug,
   RocketLaunch,
+  Robot,
   Sparkle,
+  TrendUp,
   XCircle,
 } from "@phosphor-icons/react";
 
-const LOGO = "/arevei-logo.png";
+const LOGO = "/arevei-logo-mark.png";
+const NAV_ITEMS = [
+  { to: "/admin", label: "Dashboard", icon: House },
+  { to: "/admin/dev", label: "AI Workspace", icon: Sparkle },
+  { to: "/admin/agent", label: "Manager", icon: Robot },
+  { to: "/admin?view=meetings", label: "Meetings", icon: Calendar },
+  { to: "/admin?view=brain", label: "Brain", icon: Brain },
+  { to: "/admin?view=growth", label: "Growth", icon: TrendUp },
+  { to: "/admin?view=settings", label: "Settings", icon: GearSix },
+];
 
 const TABS = [
   { id: "roadmap", label: "Roadmap", icon: GitBranch },
@@ -70,6 +85,7 @@ function EmptyState({ title, body }) {
 }
 
 export default function Agent() {
+  const { user } = useAuth();
   const [tab, setTab] = useState("roadmap");
   const [settings, setSettings] = useState({ auto_publish_low_risk: false });
   const [roadmap, setRoadmap] = useState({ active: null, draft: null });
@@ -233,53 +249,71 @@ export default function Agent() {
     <div className="aw-shell min-h-screen bg-[#030607] text-white">
       <div className="aw-bg-grid" />
       <div className="aw-glow aw-glow-a" />
-      <div className="relative z-10">
-        <header className="flex h-[76px] items-center justify-between border-b border-white/10 px-8">
-          <Link to="/admin"><img src={LOGO} alt="Arevei" className="h-10 w-auto" /></Link>
-          <div className="hidden items-center gap-5 md:flex">
-            <span className="flex items-center gap-2 text-[#49e8ca]"><Sparkle /> AI Website Manager</span>
-            <span className="h-6 w-px bg-white/15" />
-            <span className="text-white/60">Preparing roadmap using AI</span>
+      <div className="relative z-10 flex min-h-screen">
+        <aside className="fixed inset-y-0 left-0 z-20 hidden h-screen w-[220px] flex-col overflow-hidden border-r border-white/[.07] bg-[#030908] px-4 py-5 lg:flex">
+          <Link to="/admin" className="inline-flex shrink-0">
+            <img src={LOGO} alt="Arevei" className="h-7 w-auto max-w-full object-contain object-left" />
+          </Link>
+          <nav className="mt-8 space-y-1">
+            {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+              <Link key={to} to={to} className={`aw-side-link ${to === "/admin/agent" ? "aw-side-link-active" : ""}`}>
+                <Icon size={19} /> {label}
+              </Link>
+            ))}
+          </nav>
+          <div className="mt-auto rounded-xl border border-white/[.08] p-3.5">
+            <Headset size={19} className="text-[#49e8ca]" />
+            <div className="mt-2 text-sm font-medium text-[#49e8ca]">Need Help?</div>
+            <div className="mt-2 text-xs leading-5 text-white/45">Our support team is available 24/7.</div>
+            <a href="mailto:vinay@arevei.com" className="mt-4 flex h-9 w-full items-center justify-center rounded-lg border border-[#49e8ca35] text-xs text-[#49e8ca] hover:bg-[#49e8ca08]">Contact Support</a>
           </div>
-          <div className="flex items-center gap-3">
-            <button onClick={resetAgent} className="rounded-xl border border-white/12 px-4 py-2 text-sm text-white/72 hover:border-white/30">Reset</button>
-            <button onClick={toggleAutoPub} className={`rounded-xl border px-4 py-2 text-sm ${settings.auto_publish_low_risk ? "border-[#49e8ca88] text-[#49e8ca]" : "border-white/12 text-white/72"}`}>
-              Auto publish {settings.auto_publish_low_risk ? "on" : "off"}
-            </button>
-          </div>
-        </header>
+        </aside>
 
-        <main className="mx-auto max-w-[1450px] px-8 py-8">
-          <section className="mb-8 grid gap-6 lg:grid-cols-[1.15fr_.85fr]">
-            <div className="aw-glass-card rounded-3xl p-8">
-              <div className="mb-4 inline-flex rounded-xl border border-[#49e8ca55] bg-[#07211d] px-4 py-2 text-sm text-[#49e8ca]">AI Roadmap Engine</div>
-              <h1 className="text-[46px] font-extrabold leading-tight tracking-[-.02em]">
-                Preparing roadmap for your <span className="text-[#49e8ca]">AI Website Manager</span>
+        <main className="min-w-0 flex-1 px-5 py-3.5 sm:px-7 lg:ml-[220px]">
+          <header className="mb-7 flex h-9 items-center justify-between">
+            <div className="mx-auto hidden h-9 w-[360px] items-center justify-between rounded-full border border-white/[.09] px-3.5 text-xs text-white/45 md:flex">
+              <span className="flex items-center gap-2"><Sparkle size={16} className="text-[#49e8ca]" /> Ask Arevei anything...</span>
+              <span>Ctrl K</span>
+            </div>
+            <div className="ml-auto flex items-center gap-2.5">
+              <span className="grid h-8 w-8 place-items-center rounded-full bg-[#49e8ca] text-[11px] font-bold text-[#032c25]">
+                {(user?.name || user?.email || "A").slice(0, 2).toUpperCase()}
+              </span>
+              <span className="hidden text-sm font-semibold sm:block">{user?.name || "Demo"}</span>
+            </div>
+          </header>
+
+          <div className="mx-auto max-w-[1120px]">
+          <section className="mb-5 grid gap-4 lg:grid-cols-[1.15fr_.85fr]">
+            <div className="aw-glass-card rounded-2xl p-5 sm:p-6">
+              <div className="mb-3 inline-flex rounded-lg border border-[#49e8ca40] bg-[#07211d] px-3 py-1.5 text-xs text-[#49e8ca]">AI Roadmap Engine</div>
+              <h1 className="max-w-[620px] text-[30px] font-bold leading-[1.12] tracking-[-.025em] sm:text-[34px]">
+                Your AI website <span className="text-[#49e8ca]">Manager</span>
               </h1>
-              <p className="mt-4 max-w-2xl text-lg leading-8 text-white/62">
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-white/58">
                 Arevei turns business context into goals, daily tasks, content actions, reports, and growth recommendations.
               </p>
-              <div className="mt-7 flex flex-wrap gap-3">
-                <button onClick={runDiscovery} disabled={loading} className="inline-flex h-12 items-center gap-2 rounded-full bg-[#49e8ca] px-6 font-bold text-black disabled:opacity-60">
-                  <Sparkle /> {loading ? "Drafting..." : "Generate Roadmap"}
+              <div className="mt-5 flex flex-wrap gap-2">
+                <button onClick={runDiscovery} disabled={loading} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#49e8ca] px-4 text-sm font-semibold text-[#032c25] disabled:opacity-60">
+                  <Sparkle size={16} /> {loading ? "Drafting..." : "Generate Roadmap"}
                 </button>
-                <button onClick={proposeBlog} disabled={loading} className="inline-flex h-12 items-center gap-2 rounded-full border border-white/14 px-6 font-bold text-white hover:border-[#49e8ca88]">
-                  <FileText /> Draft Blog
+                <button onClick={proposeBlog} disabled={loading} className="inline-flex h-10 items-center gap-2 rounded-lg border border-white/10 px-4 text-sm font-medium text-white/72 hover:border-[#49e8ca66]">
+                  <FileText size={16} /> Draft Blog
                 </button>
               </div>
             </div>
-            <div className="aw-glass-card rounded-3xl p-8">
+            <div className="aw-glass-card rounded-2xl p-5 sm:p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm uppercase tracking-[.16em] text-white/42">Autopilot Status</div>
-                  <div className="mt-2 text-2xl font-bold">{activeRoadmap ? "Roadmap online" : "Waiting for discovery"}</div>
+                  <div className="text-[11px] uppercase tracking-[.16em] text-white/42">Autopilot Status</div>
+                  <div className="mt-1.5 text-lg font-semibold">{activeRoadmap ? "Roadmap online" : "Waiting for discovery"}</div>
                 </div>
                 <span className="aw-live-dot" />
               </div>
-              <div className="mt-7 grid gap-3">
+              <div className="mt-4 grid gap-2">
                 {["Business context", "Growth strategy", "Monthly goals", "Execution queue"].map((item, index) => (
-                  <div key={item} className="flex items-center gap-3 rounded-xl bg-white/[.035] px-4 py-3 text-sm">
-                    <CheckCircle className={index < 2 || activeRoadmap ? "text-[#49e8ca]" : "text-white/28"} weight="fill" />
+                  <div key={item} className="flex items-center gap-2.5 rounded-lg border border-white/[.04] bg-white/[.025] px-3 py-2.5 text-xs">
+                    <CheckCircle size={14} className={index < 2 || activeRoadmap ? "text-[#49e8ca]" : "text-white/28"} weight="fill" />
                     <span>{item}</span>
                   </div>
                 ))}
@@ -287,16 +321,24 @@ export default function Agent() {
             </div>
           </section>
 
-          <div className="mb-7 flex flex-wrap gap-2">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-2">
             {TABS.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
                 onClick={() => setTab(id)}
-                className={`inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm ${tab === id ? "border-[#49e8ca88] bg-[#49e8ca12] text-[#49e8ca]" : "border-white/10 text-white/60 hover:text-white"}`}
+                className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs ${tab === id ? "border-[#49e8ca70] bg-[#49e8ca10] text-[#49e8ca]" : "border-white/[.08] text-white/55 hover:text-white"}`}
               >
-                <Icon size={17} /> {label}
+                <Icon size={15} /> {label}
               </button>
             ))}
+            </div>
+            <div className="hidden shrink-0 items-center gap-2 xl:flex">
+              <button onClick={resetAgent} className="h-9 rounded-lg border border-white/[.09] px-3 text-xs text-white/55 hover:text-white">Reset</button>
+              <button onClick={toggleAutoPub} className={`h-9 rounded-lg border px-3 text-xs ${settings.auto_publish_low_risk ? "border-[#49e8ca66] bg-[#49e8ca0c] text-[#49e8ca]" : "border-white/[.09] text-white/55"}`}>
+                Auto publish {settings.auto_publish_low_risk ? "on" : "off"}
+              </button>
+            </div>
           </div>
 
           {tab === "roadmap" && (
@@ -396,6 +438,7 @@ export default function Agent() {
               ))}
             </div>
           )}
+          </div>
         </main>
       </div>
     </div>
