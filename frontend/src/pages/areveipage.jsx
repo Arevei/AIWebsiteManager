@@ -35,6 +35,7 @@ import {
 } from "@/lib/mock";
 import { Link } from "react-router-dom";
 import MarketingNav from "@/components/MarketingNav";
+import BrandLogo from "@/components/BrandLogo";
 // import SocialIcons from "@/components/Footer/SocialIcons";
 export const areveiEntity = {
   brandName: "Arevei Technologies",
@@ -145,16 +146,8 @@ function BlobDecor({
 
 /* ================= Logo ================= */
 const Logo = () => (
-    <a href="/" className="flex items-center gap-2">
-        <img
-            src="/assets/images/NewAreveiFavicon.png"
-            alt=""
-            aria-hidden="true"
-            className="h-7 w-7 object-contain"
-        />
-        <span className="font-display text-[22px] tracking-tight text-black dark:text-white">
-            Arevei
-        </span>
+    <a href="/" className="inline-flex shrink-0">
+        <BrandLogo className="h-7" />
     </a>
 );
 
@@ -2003,16 +1996,8 @@ export function Footer() {
             <div className="max-w-[1400px] mx-auto rounded-[24px] md:rounded-[28px] bg-[#071312] dark:bg-[#071312] text-white px-4 sm:px-6 lg:px-14 py-10 sm:py-12 lg:py-20 border border-white/10 overflow-hidden">
                 <div className="grid lg:grid-cols-[1.1fr_2.2fr] gap-9 lg:gap-12">
                     <div className="max-w-[360px]">
-                        <div className="flex items-center gap-3">
-                            <img
-                                src="/assets/images/NewAreveiFavicon.png"
-                                alt=""
-                                aria-hidden="true"
-                                className="h-9 w-9 object-contain"
-                            />
-                            <div className="font-display text-[36px] leading-none tracking-tight text-white">
-                                Arevei
-                            </div>
+                        <div className="inline-flex">
+                            <BrandLogo className="h-9" onDark />
                         </div>
                         <p className="text-white/62 text-[14px] mt-4 leading-relaxed">
                             The AI-Native Website Manager. Build, manage, and grow under one expert team.
@@ -2151,5 +2136,4 @@ export default function Home() {
         </div>
     );
 }
-
 

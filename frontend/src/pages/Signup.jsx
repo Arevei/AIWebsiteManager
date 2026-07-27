@@ -4,6 +4,7 @@ import { useAuth } from "../lib/auth";
 import { ThemeToggle } from "../lib/theme";
 import { toast } from "sonner";
 import { Check } from "@phosphor-icons/react";
+import BrandLogo from "../components/BrandLogo";
 
 export default function Signup() {
   const { signup } = useAuth();
@@ -32,13 +33,13 @@ export default function Signup() {
       <div className="hidden md:flex md:w-1/2 rounded-[28px] relative overflow-hidden bg-[color:var(--ar-surface)] border border-[color:var(--ar-line)] p-12 flex-col justify-between">
         <div className="blob blob-teal w-[380px] h-[380px] -top-28 -left-28" />
         <div className="blob blob-lime w-[300px] h-[300px] -bottom-24 -right-20" />
-        <Link to="/" className="relative font-display text-3xl font-extrabold tracking-tighter">
-          AREVEI<span className="text-[color:var(--ar-accent)]">.</span>
+        <Link to="/" className="relative inline-flex shrink-0">
+          <BrandLogo className="h-8" />
         </Link>
         <div className="relative">
           <span className="eyebrow-pill mb-6">What you get</span>
           <ul className="space-y-4 text-[color:var(--ar-ink-2)] mt-6 text-[15px]">
-            {["Pre-built, token-driven website template", "AI Studio with Claude Sonnet 4.6", "SEO/AEO/GEO dashboard", "Versioning & one-click rollback"].map((li) => (
+            {["AI Autopilot for Growth", "SEO/AEO/GEO dashboard", "Versioning & one-click rollback"].map((li) => (
               <li key={li} className="flex items-start gap-2.5">
                 <Check size={17} weight="bold" className="text-[color:var(--ar-ai)] mt-0.5 shrink-0" /> {li}
               </li>

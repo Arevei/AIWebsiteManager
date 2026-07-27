@@ -29,7 +29,6 @@ import {
 } from "@phosphor-icons/react";
 
 const LOGO = "/arevei-logo-mark.png";
-const MARK = "/arevei-logo-mark.png";
 const CONTACT_EMAIL = "vinay@arevei.com";
 
 function workspacePreviewUrl(workspaceId) {
@@ -54,8 +53,8 @@ function Shell({ children, className = "" }) {
   );
 }
 
-function Brand({ mark = false, className = "" }) {
-  return <img src={mark ? MARK : LOGO} alt="Arevei" className={`${mark ? "h-8" : "h-10"} w-auto max-w-full shrink-0 object-contain object-left ${className}`} />;
+function Brand({ className = "" }) {
+  return <img src={LOGO} alt="Arevei" className={`h-10 w-auto max-w-full shrink-0 object-contain object-left ${className}`} />;
 }
 
 function Avatar({ userName, compact = false }) {
@@ -79,7 +78,6 @@ function RobotFace({ large = false, clean = false }) {
         <span className="aw-eye" />
         <span className="aw-smile" />
       </div>
-      {!clean && <img src={MARK} alt="" className="aw-robot-mark" />}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import BrandLogo from "../../components/BrandLogo";
 
 export default function SuperAdmin() {
   const { user, logout } = useAuth();
@@ -43,7 +44,7 @@ export default function SuperAdmin() {
     <div className="min-h-screen bg-white text-[color:var(--ar-ink)]" data-testid="super-admin">
       <header className="border-b border-[color:var(--ar-line)] px-6 py-4 flex justify-between items-center">
         <div className="flex items-center gap-4">
-          <Link to="/" className="font-display text-2xl font-black tracking-tighter">AREVEI<span className="text-[color:var(--ar-ai)]">.</span></Link>
+          <Link to="/" className="inline-flex shrink-0"><BrandLogo className="h-7" /></Link>
           <span className="font-mono text-xs uppercase tracking-[0.2em] bg-[color:var(--ar-ink)] text-white px-3 py-1">Super Admin</span>
         </div>
         <div className="flex items-center gap-3">

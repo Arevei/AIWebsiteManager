@@ -1,13 +1,14 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { ThemeToggle } from "../lib/theme";
+import BrandLogo from "./BrandLogo";
 
 export default function MarketingNav() {
   return (
     <header className="sticky top-0 z-50 glass-nav px-6 py-3.5" data-testid="marketing-nav">
       <div className="max-w-[1400px] mx-auto flex items-center justify-between">
-        <Link to="/" className="font-display text-2xl font-extrabold tracking-tighter" data-testid="brand-home">
-          AREVEI<span className="text-[color:var(--ar-accent)]">.</span>
+        <Link to="/" className="inline-flex shrink-0" data-testid="brand-home">
+          <BrandLogo className="h-7" />
         </Link>
         <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-[color:var(--ar-ink-2)]">
           <Link href="#how" data-testid="nav-how" className="hover:text-[color:var(--ar-ink)] transition-colors">How it works</Link>

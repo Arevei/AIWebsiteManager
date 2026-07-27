@@ -2,6 +2,7 @@ import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { ThemeToggle } from "../lib/theme";
+import BrandLogo from "./BrandLogo";
 
 const TOP_NAV = [
   { to: "/admin", label: "Dashboard" },
@@ -18,8 +19,8 @@ export default function AdminShell({ children, title, subtitle, actions }) {
     <div className="min-h-screen bg-[color:var(--ar-bg)] text-[color:var(--ar-ink)] flex flex-col" data-testid="admin-shell">
       <header className="glass-nav px-6 py-3 flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center gap-6 min-w-0">
-          <Link to="/admin" className="font-display text-xl font-extrabold tracking-tighter shrink-0" data-testid="brand-link">
-            AREVEI<span className="text-[color:var(--ar-accent)]">.</span>
+          <Link to="/admin" className="inline-flex shrink-0" data-testid="brand-link">
+            <BrandLogo className="h-6" />
           </Link>
           <nav className="flex max-w-[calc(100vw-220px)] items-center gap-1 overflow-x-auto text-[12px] font-medium">
             {TOP_NAV.map((n) => {

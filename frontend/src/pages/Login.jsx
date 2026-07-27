@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { useTheme, ThemeToggle } from "../lib/theme";
 import { toast } from "sonner";
+import BrandLogo from "../components/BrandLogo";
 
 const HERO_DAY = "https://static.prod-images.emergentagent.com/jobs/18e6be65-15c9-4c67-9c3f-b12fcb1e88e2/images/0e73ff25006aef0d3e5985fabd68a281dbb3cedc1ac2ec9db26accbc882ecfce.png";
 const HERO_NIGHT = "https://static.prod-images.emergentagent.com/jobs/18e6be65-15c9-4c67-9c3f-b12fcb1e88e2/images/e4bec56c60d032f5469b5c9477cd63db68dacc105ba7dfea00544935abe16cfe.png";
@@ -36,18 +37,23 @@ export default function Login() {
         style={{ backgroundImage: `url(${theme === "dark" ? HERO_NIGHT : HERO_DAY})`, backgroundSize: "cover", backgroundPosition: "center" }}
       >
         <div className="absolute inset-0 hero-overlay" />
-        <Link to="/" className="relative font-display text-3xl font-extrabold tracking-tighter" data-testid="brand-link">
-          AREVEI<span className="text-[color:var(--ar-accent)]">.</span>
+        <Link to="/" className="relative inline-flex shrink-0" data-testid="brand-link">
+          <BrandLogo className="h-8" onDark />
         </Link>
         <div className="relative">
-          <div className="inline-flex items-center rounded-full border border-white/25 bg-white/10 backdrop-blur-md px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/90 mb-6">AI Native CMS</div>
+          <div className="inline-flex items-center rounded-full border border-white/25 bg-white/10 backdrop-blur-md px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/90 mb-6">AI Native Website Manager</div>
           <div className="display-hero text-4xl lg:text-5xl">
             Save time.<br />
             <span className="text-[color:var(--ar-accent)]">Scale fast.</span><br />
             Ship anything.
           </div>
         </div>
-        <div className="relative font-mono text-xs text-white/60">Try demo: founder@demo.com / Demo@1234</div>
+        <div className="relative w-fit rounded-xl border border-[#49e8ca66] bg-black/35 px-4 py-3 backdrop-blur-md">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[color:var(--ar-accent)]">Try the demo</div>
+          <div className="font-mono text-xs font-medium text-white">
+            founder@demo.com <span className="mx-1.5 text-white/40">/</span> Demo@1234
+          </div>
+        </div>
       </div>
 
       <div className="flex-1 flex items-center justify-center p-6 relative overflow-hidden">

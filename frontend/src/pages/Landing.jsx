@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import MarketingNav from "../components/MarketingNav";
 import { useTheme } from "../lib/theme";
 import { ArrowUpRight, Lightning, Robot, MagnifyingGlass, Cube, Sparkle, Check } from "@phosphor-icons/react";
+import BrandLogo from "../components/BrandLogo";
 
 const HERO_DAY = "https://static.prod-images.emergentagent.com/jobs/18e6be65-15c9-4c67-9c3f-b12fcb1e88e2/images/0e73ff25006aef0d3e5985fabd68a281dbb3cedc1ac2ec9db26accbc882ecfce.png";
 const HERO_NIGHT = "https://static.prod-images.emergentagent.com/jobs/18e6be65-15c9-4c67-9c3f-b12fcb1e88e2/images/e4bec56c60d032f5469b5c9477cd63db68dacc105ba7dfea00544935abe16cfe.png";
@@ -238,7 +239,7 @@ export default function Landing() {
 
       <footer className="px-4 pb-8">
         <div className="max-w-[1400px] mx-auto rounded-[24px] border border-[color:var(--ar-line)] bg-[color:var(--ar-surface)] px-8 py-6 flex flex-wrap justify-between gap-4 text-xs text-[color:var(--ar-ink-3)] font-medium">
-          <span className="font-display font-extrabold text-base text-[color:var(--ar-ink)] tracking-tighter">AREVEI<span className="text-[color:var(--ar-accent)]">.</span></span>
+          <BrandLogo className="h-6" />
           <span>© AREVEI 2026 · Built for founders</span>
           <span>hello@arevei.com</span>
         </div>
