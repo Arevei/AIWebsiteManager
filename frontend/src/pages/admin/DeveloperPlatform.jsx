@@ -1,17 +1,19 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
+import { Link, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import {
   ArrowUp,
   CaretDown,
+  CheckCircle,
   ChatCircle,
   Code,
-  Database,
   DotsThree,
   Eye,
   File,
   Folder,
   FolderOpen,
+  Hammer,
   GitCommit,
   GithubLogo,
   GridFour,
@@ -23,7 +25,6 @@ import {
   PaperPlaneTilt,
   Play,
   Plus,
-  Power,
   RocketLaunch,
   ArrowSquareOut,
   SidebarSimple,
@@ -32,11 +33,25 @@ import {
   Sun,
   Terminal,
   Trash,
-  UploadSimple,
   X,
 } from "@phosphor-icons/react";
-import { api } from "../../lib/api";
+import { API, api, getToken } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
+import { useTheme } from "../../lib/theme";
+
+const ADMIN_NAV = [
+  { to: "/admin", label: "Overview", icon: GridFour },
+  { to: "/admin/dev", label: "Workspace", icon: Code },
+  { to: "/admin/agent", label: "Agent", icon: Terminal },
+  { to: "/admin/ai", label: "AI Studio", icon: GridFour },
+  { to: "/admin/talk", label: "Talk", icon: ChatCircle },
+  { to: "/admin/content", label: "Content", icon: GridFour },
+  { to: "/admin/design", label: "Design", icon: GridFour },
+  { to: "/admin/seo", label: "SEO / AEO", icon: GridFour },
+  { to: "/admin/versions", label: "History", icon: GridFour },
+  { to: "/admin/team", label: "Team", icon: GridFour },
+  { to: "/admin/billing", label: "Billing", icon: GridFour },
+];
 
 function encodePath(path) {
   return path.split("/").map(encodeURIComponent).join("/");
@@ -428,9 +443,9 @@ function DiffList({ changes, onApply, onOpenFile, theme }) {
 
 export default function DeveloperPlatform() {
   const { user, logout } = useAuth();
-  const [theme, setTheme] = useState(() => localStorage.getItem("arevei_workspace_theme") || "dark");
+  const { theme, toggle: toggleTheme } = useTheme();
+  const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem("arevei_sidebar_open") !== "false");
-  const [activeSection, setActiveSection] = useState("Workspace");
   const [searchQuery, setSearchQuery] = useState("");
   const [homeMode, setHomeMode] = useState("chat");
   const [screen, setScreen] = useState("home");
@@ -449,6 +464,8 @@ export default function DeveloperPlatform() {
   const [selectedPath, setSelectedPath] = useState("");
   const [file, setFile] = useState(null);
   const [editorValue, setEditorValue] = useState("");
+  const [openFiles, setOpenFiles] = useState([]);
+  const [fileDrafts, setFileDrafts] = useState({});
   const [messages, setMessages] = useState([]);
   const [changes, setChanges] = useState([]);
   const [preview, setPreview] = useState(null);
@@ -466,13 +483,13 @@ export default function DeveloperPlatform() {
   const [importLoading, setImportLoading] = useState(false);
   const [agentStatus, setAgentStatus] = useState("");
   const [loading, setLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const p = palette(theme);
 
   const currentTitle = useMemo(
     () => workspaceTitle({ workspace, project, chat }),
     [workspace, project, chat]
   );
-  const menuItems = ["Overview", "Workspace", "Agent", "AI Studio", "Talk", "Content", "Design", "SEO / AEO", "History", "Team", "Billing"];
   const recentItems = useMemo(
     () => [...generalChats.map((item) => ({ ...item, listKind: "chat" })), ...recentWorkspaces.map((item) => ({ ...item, listKind: "project" }))]
       .filter((item) => workspaceTitle(item).toLowerCase().includes(searchQuery.toLowerCase()) || item.title?.toLowerCase().includes(searchQuery.toLowerCase())),
@@ -480,10 +497,12 @@ export default function DeveloperPlatform() {
   );
   const workspaceUsage = Math.min(100, Math.round((recentWorkspaces.length / 20) * 100));
   const agentUsage = Math.min(100, Math.round((messages.filter((item) => item.role === "agent").length / 50) * 100));
-
-  useEffect(() => {
-    localStorage.setItem("arevei_workspace_theme", theme);
-  }, [theme]);
+  const previewFrameUrl = useMemo(() => {
+    if (!workspace?.id || !runtime?.preview_url) return "";
+    const token = getToken();
+    const auth = token ? `?arevei_token=${encodeURIComponent(token)}` : "";
+    return `${API}/workspaces/${workspace.id}/runtime/preview-proxy${auth}`;
+  }, [workspace?.id, runtime?.preview_url]);
 
   useEffect(() => {
     localStorage.setItem("arevei_sidebar_open", String(sidebarOpen));
@@ -492,6 +511,7 @@ export default function DeveloperPlatform() {
   useEffect(() => {
     loadStartData();
     handleGithubReturn();
+    handleVercelReturn();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -620,6 +640,8 @@ export default function DeveloperPlatform() {
     setSelectedPath("");
     setFile(null);
     setEditorValue("");
+    setOpenFiles([]);
+    setFileDrafts({});
     setMessages([]);
     setChanges([]);
     setPreview(null);
@@ -798,13 +820,39 @@ export default function DeveloperPlatform() {
     const id = workspaceId || workspace?.id;
     if (!id || !path) return;
     try {
+      if (selectedPath) {
+        setFileDrafts((drafts) => ({ ...drafts, [selectedPath]: editorValue }));
+      }
       const res = await api.get(`/workspaces/${id}/files/${encodePath(path)}`);
       setSelectedPath(path);
       setFile(res.data);
-      setEditorValue(res.data.content || "");
+      setEditorValue(fileDrafts[path] ?? res.data.content ?? "");
+      setOpenFiles((items) => {
+        const existing = items.find((item) => item.path === path);
+        if (existing) return items.map((item) => item.path === path ? { ...item, language: res.data.language, content: res.data.content || "" } : item);
+        return [...items, { path, language: res.data.language, content: res.data.content || "" }];
+      });
       if (switchView) setRightView("editor");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Could not open file");
+    }
+  };
+
+  const closeOpenFile = (path) => {
+    setOpenFiles((items) => items.filter((item) => item.path !== path));
+    setFileDrafts((drafts) => {
+      const next = { ...drafts };
+      delete next[path];
+      return next;
+    });
+    if (selectedPath !== path) return;
+    const nextFile = openFiles.find((item) => item.path !== path);
+    if (nextFile) {
+      openFile(null, nextFile.path, true);
+    } else {
+      setSelectedPath("");
+      setFile(null);
+      setEditorValue("");
     }
   };
 
@@ -813,6 +861,8 @@ export default function DeveloperPlatform() {
     try {
       const res = await api.put(`/workspaces/${workspace.id}/files/${encodePath(selectedPath)}`, { content: editorValue });
       setFile(res.data);
+      setOpenFiles((items) => items.map((item) => item.path === selectedPath ? { ...item, content: editorValue } : item));
+      setFileDrafts((drafts) => ({ ...drafts, [selectedPath]: editorValue }));
       await api.post(`/workspaces/${workspace.id}/runtime/sync`);
       await refreshWorkspace(workspace.id);
       toast.success("Saved");
@@ -895,33 +945,85 @@ export default function DeveloperPlatform() {
     }
   };
 
-  const stopRuntime = async () => {
-    if (!workspace || !runtime) return;
-    try {
-      await api.post(`/workspaces/${workspace.id}/runtime/stop`);
-      await refreshWorkspace(workspace.id);
-      setRightView("logs");
-      toast.success("Runtime stopped");
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Could not stop runtime");
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        saveFile();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace?.id, selectedPath, editorValue]);
+
+  const handleVercelReturn = () => {
+    const params = new URLSearchParams(window.location.search);
+    const vercelStatus = params.get("vercel");
+    if (!vercelStatus) return;
+    if (vercelStatus === "connected") {
+      toast.success("Vercel connected");
+    } else {
+      toast.error("Vercel connection failed");
     }
+    params.delete("vercel");
+    const query = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
   };
 
-  const publish = async () => {
-    setVercelOpen(true);
-  };
+  const ensurePreview = useCallback(async () => {
+    if (!workspace?.id || previewLoading) return;
+    setPreviewLoading(true);
+    setAgentStatus("Starting preview workspace...");
+    try {
+      if (!runtime) {
+        const config = workspace.runtime_config || {};
+        await api.post(`/workspaces/${workspace.id}/runtime/start`, {
+          install_command: config.install_command,
+          dev_command: config.dev_command,
+          build_command: config.build_command,
+          test_command: config.test_command,
+          lint_command: config.lint_command,
+        });
+      }
+      setAgentStatus(`Opening preview with ${runtime?.dev_command || workspace.runtime_config?.dev_command || "npm run dev"}...`);
+      const res = await api.post(`/workspaces/${workspace.id}/runtime/ensure-preview`);
+      setRuntime(res.data.runtime || null);
+      setRuntimeLogs(res.data.logs || []);
+      if (res.data.status !== "preview_ready") {
+        await refreshWorkspace(workspace.id);
+        setRightView("logs");
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Could not start preview");
+      await refreshWorkspace(workspace.id);
+      setRightView("logs");
+    } finally {
+      setAgentStatus("");
+      setPreviewLoading(false);
+    }
+  // refreshWorkspace intentionally stays outside the dependency list because it
+  // is recreated on each render and would retrigger preview warm-up loops.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewLoading, runtime, workspace]);
+
+  useEffect(() => {
+    if (screen !== "workspace" || rightView !== "preview" || !workspace?.id) return;
+    if (previewFrameUrl || previewLoading) return;
+    ensurePreview();
+  }, [ensurePreview, previewFrameUrl, previewLoading, rightView, screen, workspace?.id]);
 
   const handleSetRightView = (view) => {
     setRightView(view);
-    if (view === "preview" && (!runtime || runtime.status === "stopped")) {
-      runCommand(runtime?.dev_command || "npm run dev");
+    if (view === "preview") {
+      ensurePreview();
     }
   };
 
   const connectVercel = async () => {
     try {
-      const returnUrl = window.location.origin + "/api/vercel/install/callback";
-      const res = await api.get(`/vercel/install/start?redirect_uri=${encodeURIComponent(returnUrl)}`);
+      const returnTo = `${window.location.origin}${window.location.pathname}`;
+      const res = await api.get(`/vercel/install/start?return_to=${encodeURIComponent(returnTo)}`);
       window.location.href = res.data.url;
     } catch (err) {
       toast.error(err.response?.data?.detail || "Could not start Vercel connection");
@@ -1064,12 +1166,12 @@ export default function DeveloperPlatform() {
           {sidebarOpen ? (
             <>
               <div className="font-semibold">Appearance</div>
-              <button onClick={() => setTheme((value) => (value === "dark" ? "light" : "dark"))} className={cx("mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-md border text-sm font-semibold", p.inverseButton)}>
+              <button onClick={toggleTheme} className={cx("mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-md border text-sm font-semibold", p.inverseButton)}>
                 {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />} {theme === "dark" ? "Light mode" : "Dark mode"}
               </button>
             </>
           ) : (
-            <IconButton title="Toggle theme" onClick={() => setTheme((value) => (value === "dark" ? "light" : "dark"))} className={cx("mx-auto", p.hover)}>
+            <IconButton title="Toggle theme" onClick={toggleTheme} className={cx("mx-auto", p.hover)}>
               {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
             </IconButton>
           )}
@@ -1091,13 +1193,27 @@ export default function DeveloperPlatform() {
       {screen === "home" ? (
         <main className="relative flex flex-1 flex-col">
           <header className={cx("flex h-14 shrink-0 items-center justify-between border-b px-5", p.side)}>
-            <div>
-              <div className={cx("font-mono text-xs uppercase tracking-[.18em]", p.faint)}>AREVEI</div>
-              <div className="text-sm font-semibold">AI Workspace</div>
+            
+            <div className="flex min-w-0 items-center gap-3">
+              <nav className="hidden max-w-[760px] items-center gap-1  lg:flex">
+                {ADMIN_NAV.map(({ to, label, icon: Icon }) => (
+                  <Link
+                    key={to}
+                    to={to}
+                    className={cx(
+                      "flex h-7 shrink-0 items-center gap-1.5 rounded px-2 text-[11px]",
+                      (location.pathname === to || (to !== "/admin" && location.pathname.startsWith(to))) ? p.active : `${p.muted} ${p.hover}`
+                    )}
+                  >
+                    <Icon size={13} />
+                    <span>{label}</span>
+                  </Link>
+                ))}
+              </nav>
+              <IconButton title="Toggle theme" onClick={toggleTheme} className={cx("border", p.inverseButton)}>
+                {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+              </IconButton>
             </div>
-            <IconButton title="Toggle theme" onClick={() => setTheme((value) => (value === "dark" ? "light" : "dark"))} className={cx("border", p.inverseButton)}>
-              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-            </IconButton>
           </header>
           {normalMessages.length > 0 && (
             <div className="mx-auto mt-10 w-full max-w-[864px] flex-1 overflow-y-auto px-6">
@@ -1135,22 +1251,18 @@ export default function DeveloperPlatform() {
       ) : (
         <main className="flex min-w-0 flex-1 flex-col">
           <div className={cx("flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b px-2", p.side)}>
-            {menuItems.map((label) => (
-              <button
-                key={label}
-                onClick={() => {
-                  setActiveSection(label);
-                  if (label === "Overview") newChat();
-                  if (label === "Workspace" && workspace) setScreen("workspace");
-                }}
+            {ADMIN_NAV.map(({ to, label, icon: Icon }) => (
+              <Link
+                key={to}
+                to={to}
                 className={cx(
                   "flex h-6 shrink-0 items-center gap-1.5 rounded px-2 text-[11px]",
-                  activeSection === label ? p.active : `${p.muted} ${p.hover}`
+                  (location.pathname === to || (to !== "/admin" && location.pathname.startsWith(to))) ? p.active : `${p.muted} ${p.hover}`
                 )}
               >
-                {label === "Workspace" ? <Code size={13} /> : label === "Agent" ? <Terminal size={13} /> : label === "Talk" ? <ChatCircle size={13} /> : <GridFour size={13} />}
+                <Icon size={13} />
                 <span>{label}</span>
-              </button>
+              </Link>
             ))}
           </div>
           <header className={cx("flex h-12 shrink-0 items-center justify-between border-b px-4", p.side)}>
@@ -1167,11 +1279,14 @@ export default function DeveloperPlatform() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <IconButton title="Toggle theme" onClick={() => setTheme((value) => (value === "dark" ? "light" : "dark"))} className={cx("border", p.inverseButton)}>
+              <button onClick={() => setVercelOpen(true)} disabled={!workspace} className={cx("flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium disabled:opacity-40", p.inverseButton)}>
+                <RocketLaunch size={15} /> Deploy
+              </button>
+              <IconButton title="Toggle theme" onClick={toggleTheme} className={cx("border", p.inverseButton)}>
                 {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
               </IconButton>
-              <button onClick={() => setCommitOpen(true)} disabled={loading || !workspace} className={cx("flex h-9 items-center gap-2 rounded-md border px-3 text-sm disabled:opacity-40", p.inverseButton)}>
-                <GitCommit size={18} /> Commit
+              <button onClick={() => setCommitOpen(true)} disabled={loading || !workspace} className={cx("flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium disabled:opacity-40", p.inverseButton)}>
+                <GitCommit size={15} /> Commit
               </button>
             </div>
           </header>
@@ -1249,27 +1364,35 @@ export default function DeveloperPlatform() {
                     </button>
                   ))}
                 </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => runCommand(runtime?.install_command || "npm install")} className={cx("flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>
-                    <Terminal size={16} /> Install
+                <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto">
+                  <button title="Install dependencies" onClick={() => runCommand(runtime?.install_command || "npm install")} className={cx("flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs", p.inverseButton)}>
+                    <Terminal size={15} /> Install
                   </button>
-                  <button onClick={() => runCommand(runtime?.dev_command || "npm run dev")} className={cx("flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>
-                    <Play size={16} /> Run dev
+                  <button title="Start dev server" onClick={() => runCommand(runtime?.dev_command || "npm run dev")} className={cx("flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs", p.inverseButton)}>
+                    <Play size={15} /> Dev
                   </button>
-                  <button onClick={() => runCommand(runtime?.test_command || "npm test -- --watch=false")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Test</button>
-                  <button onClick={() => runCommand(runtime?.build_command || "npm run build")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Build</button>
-                  <button onClick={() => runCommand(runtime?.lint_command || "npm run lint")} className={cx("rounded-md border px-3 py-1.5 text-sm", p.inverseButton)}>Debug</button>
-                  <button onClick={stopRuntime} disabled={!runtime || runtime.status === "stopped"} className={cx("flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm disabled:opacity-40", p.inverseButton)}>
-                    <Power size={16} /> Stop
+                  <button title="Run tests" onClick={() => runCommand(runtime?.test_command || "npm test -- --watch=false")} className={cx("flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs", p.inverseButton)}>
+                    <CheckCircle size={15} /> Test
                   </button>
-                  <button onClick={() => setVercelOpen(true)} disabled={!workspace} className={cx("rounded-md border px-3 py-1.5 text-sm disabled:opacity-40", p.inverseButton)}>Deploy</button>
-                  <button onClick={saveFile} disabled={!file} className={cx("rounded-md border px-3 py-1.5 text-sm disabled:opacity-40", p.inverseButton)}>Save</button>
+                  <button title="Build project" onClick={() => runCommand(runtime?.build_command || "npm run build")} className={cx("flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs", p.inverseButton)}>
+                    <Hammer size={15} /> Build
+                  </button>
                 </div>
               </div>
 
               <div className={cx("min-h-0 flex-1", p.codeBg)}>
                 {rightView === "preview" ? (
-                  runtime?.preview_url ? (
+                  previewLoading ? (
+                    <div className="flex h-full items-center justify-center p-6">
+                      <div className={cx("w-full max-w-md rounded-lg border p-5 text-center", p.panel)}>
+                        <SpinnerGap size={28} className="mx-auto mb-3 animate-spin text-[#0d9f7c]" />
+                        <div className="text-base font-semibold">Starting live preview</div>
+                        <div className={cx("mt-2 text-sm leading-6", p.muted)}>
+                          Waking the sandbox and launching the dev server. The preview will open here automatically.
+                        </div>
+                      </div>
+                    </div>
+                  ) : runtime?.preview_url ? (
                     <div className="flex h-full min-h-0 flex-col">
                       <div className={cx("flex h-10 items-center gap-2 border-b px-3 text-xs", p.side)}>
                         <span className={cx("font-mono uppercase tracking-[0.18em]", p.faint)}>
@@ -1285,7 +1408,7 @@ export default function DeveloperPlatform() {
                           <ArrowSquareOut size={15} />
                         </a>
                       </div>
-                      <iframe title="Live preview" src={runtime.preview_url} className="min-h-0 flex-1 bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
+                      <iframe title="Live preview" src={previewFrameUrl || runtime.preview_url} className="min-h-0 flex-1 bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
                     </div>
                   ) : runtime && ["preview_ready", "command_succeeded", "ready", "bridge_error"].includes(runtime.status) ? (
                     <div className="flex h-full items-center justify-center p-6">
@@ -1317,14 +1440,60 @@ export default function DeveloperPlatform() {
                     <div className={cx("mt-5 rounded-lg border p-4 text-sm", p.panelSoft, p.muted)}>Knowledge: {knowledge?.memory?.summary || "not indexed"}</div>
                   </div>
                 ) : file ? (
-                  <Editor
-                    height="100%"
-                    language={file.language || "plaintext"}
-                    value={editorValue}
-                    theme={theme === "dark" ? "vs-dark" : "vs-light"}
-                    onChange={(value) => setEditorValue(value ?? "")}
-                    options={{ minimap: { enabled: true }, fontSize: 14, wordWrap: "on", scrollBeyondLastLine: false }}
-                  />
+                  <div className="flex h-full min-h-0 flex-col">
+                    <div className={cx("flex h-9 shrink-0 items-end overflow-x-auto border-b px-1", p.side)}>
+                      {openFiles.map((item) => {
+                        const dirty = (fileDrafts[item.path] ?? item.content) !== item.content;
+                        const active = selectedPath === item.path;
+                        return (
+                          <button
+                            key={item.path}
+                            onClick={() => openFile(null, item.path, true)}
+                            className={cx(
+                              "group flex h-8 max-w-[220px] shrink-0 items-center gap-2 border-r px-3 text-left font-mono text-[12px]",
+                              active ? p.active : `${p.muted} ${p.hover}`,
+                              p.dark ? "border-[#202020]" : "border-[#deded8]"
+                            )}
+                            title={item.path}
+                          >
+                            <span className="truncate">{item.path.split("/").pop()}</span>
+                            {dirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#0d9f7c]" />}
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                closeOpenFile(item.path);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  closeOpenFile(item.path);
+                                }
+                              }}
+                              className={cx("grid h-4 w-4 shrink-0 place-items-center rounded opacity-60 hover:opacity-100", p.hover)}
+                              title="Close file"
+                            >
+                              <X size={11} />
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <Editor
+                      height="100%"
+                      language={file.language || "plaintext"}
+                      value={editorValue}
+                      theme={theme === "dark" ? "vs-dark" : "vs-light"}
+                      onChange={(value) => {
+                        const next = value ?? "";
+                        setEditorValue(next);
+                        setFileDrafts((drafts) => ({ ...drafts, [selectedPath]: next }));
+                      }}
+                      options={{ minimap: { enabled: true }, fontSize: 14, wordWrap: "on", scrollBeyondLastLine: false }}
+                    />
+                  </div>
                 ) : (
                   <div className={cx("grid h-full place-items-center", p.faint)}>Select a file.</div>
                 )}
@@ -1357,16 +1526,20 @@ export default function DeveloperPlatform() {
       />
       {vercelOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setVercelOpen(false)}>
-          <div className={cx("w-full max-w-md rounded-lg border bg-white p-6 shadow-xl dark:bg-[#111111]", p.surface)} onClick={e => e.stopPropagation()}>
+          <div className={cx("w-full max-w-md rounded-lg border p-6 shadow-xl", p.panel)} onClick={e => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold dark:text-white">Deploy to Vercel</h2>
-              <button onClick={() => setVercelOpen(false)} className={cx("rounded p-1 dark:text-white", p.hoverAction)}><X size={16} /></button>
+              <div>
+                <div className={cx("font-mono text-xs uppercase tracking-[.16em]", p.faint)}>Deployment</div>
+                <h2 className="mt-1 text-lg font-semibold">Deploy to Vercel</h2>
+              </div>
+              <button onClick={() => setVercelOpen(false)} className={cx("rounded p-1", p.hover)}><X size={16} /></button>
             </div>
             <p className={cx("mb-6 text-sm", p.muted)}>
               Connect your personal Vercel account to authorize automated deployments directly from this workspace, or trigger an immediate manual deploy.
             </p>
             <div className="flex flex-col gap-3">
-              <button onClick={connectVercel} className="flex items-center justify-center gap-2 rounded-md bg-black py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800 dark:bg-white dark:text-black dark:hover:bg-neutral-200">
+              <button onClick={connectVercel} className={cx("flex items-center justify-center gap-2 rounded-md py-2.5 text-sm font-semibold transition disabled:opacity-60", p.button)}>
+                <RocketLaunch size={16} />
                 Connect Vercel Account
               </button>
               <button onClick={triggerDeploy} className={cx("flex items-center justify-center gap-2 rounded-md border py-2.5 text-sm font-medium transition", p.inverseButton)}>

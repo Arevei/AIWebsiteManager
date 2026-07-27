@@ -99,6 +99,13 @@ html, body, #root {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
+.dark .bg-white {
+  background-color: var(--ar-panel) !important;
+}
+.dark .hover\:bg-black:hover {
+  background-color: var(--ar-accent-hover) !important;
+}
+
 .font-display {
   font-family: "Manrope", "Inter", sans-serif;
   font-weight: 800;

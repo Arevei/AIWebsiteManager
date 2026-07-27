@@ -1585,34 +1585,51 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             results[coll] = res.deleted_count
         return {"ok": True, "deleted": results}
 
+    def _api_public_base_url(request: Request | None = None) -> str:
+        configured = (
+            os.environ.get("PUBLIC_API_URL")
+            or os.environ.get("BACKEND_PUBLIC_URL")
+            or os.environ.get("REACT_APP_BACKEND_URL")
+        )
+        if configured:
+            return configured.rstrip("/")
+        if request:
+            return str(request.base_url).rstrip("/")
+        return "http://localhost:8000"
+
     @r.get("/vercel/install/start")
-    async def vercel_install_start(redirect_uri: str = None, user=Depends(current_user)):
+    async def vercel_install_start(request: Request, redirect_uri: str = None, return_to: str = None, user=Depends(current_user)):
         tid = await _tenant_id(user)
         client_id = os.environ.get("VERCEL_CLIENT_ID")
         if not client_id:
             raise HTTPException(400, "VERCEL_CLIENT_ID is not configured in backend environment")
+        active_redirect_uri = (
+            redirect_uri
+            or os.environ.get("VERCEL_REDIRECT_URI")
+            or f"{_api_public_base_url(request)}/api/vercel/install/callback"
+        )
         
         state = new_id()
         await db.vercel_oauth_states.insert_one({
             "id": state,
             "tenant_id": tid,
             "user_id": user["user_id"],
-            "redirect_uri": redirect_uri,
+            "redirect_uri": active_redirect_uri,
+            "return_to": return_to,
             "created_at": now_iso(),
         })
         
-        params = {"client_id": client_id, "state": state}
-        if redirect_uri:
-            params["redirect_uri"] = redirect_uri
+        params = {"client_id": client_id, "state": state, "redirect_uri": active_redirect_uri}
         return {"url": f"https://vercel.com/oauth/authorize?{urlencode(params)}"}
 
     @r.get("/vercel/install/callback")
-    async def vercel_install_callback(code: str = None, state: str = None, user=Depends(current_user)):
-        tid = await _tenant_id(user)
+    async def vercel_install_callback(code: str = None, state: str = None):
+        # Vercel redirects the browser here without the app's bearer token. The
+        # stored random state is the authority for the pending tenant/user.
         if not code or not state:
             raise HTTPException(400, "Missing Vercel authorization code or state")
         
-        known = await db.vercel_oauth_states.find_one({"id": state, "tenant_id": tid})
+        known = await db.vercel_oauth_states.find_one({"id": state})
         if not known:
             raise HTTPException(400, "Invalid installation state (session expired or mismatched)")
             
@@ -1623,7 +1640,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             
         try:
             # We must use exactly the same redirect_uri that was used in the authorize step
-            active_redirect_uri = known.get("redirect_uri") or os.environ.get("VERCEL_REDIRECT_URI") or "http://localhost:3000/api/vercel/install/callback"
+            active_redirect_uri = known.get("redirect_uri") or os.environ.get("VERCEL_REDIRECT_URI") or f"{_api_public_base_url()}/api/vercel/install/callback"
             resp = requests.post(
                 "https://api.vercel.com/v2/oauth/access_token",
                 data={
@@ -1641,7 +1658,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             raise HTTPException(400, f"Failed to exchange Vercel token: {str(e)}")
             
         await db.vercel_installations.update_one(
-            {"tenant_id": tid},
+            {"tenant_id": known["tenant_id"]},
             {"$set": {
                 "access_token": token_data.get("access_token"),
                 "team_id": token_data.get("team_id"),
@@ -1655,8 +1672,9 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         
         # pyrefly: ignore [missing-import]
         from fastapi.responses import RedirectResponse
-        base_url = active_redirect_uri.split("/api/vercel/install/callback")[0] if "/api/vercel" in active_redirect_uri else "/"
-        return RedirectResponse(url=f"{base_url}/")
+        return_to = known.get("return_to") or os.environ.get("FRONTEND_PUBLIC_URL") or "/"
+        separator = "&" if "?" in return_to else "?"
+        return RedirectResponse(url=f"{return_to}{separator}vercel=connected")
 
 
     @r.post("/repos/{repo_id}/load")
@@ -2218,6 +2236,70 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             {"runtime_id": runtime["id"]}, {"_id": 0}
         ).sort("created_at", 1).to_list(200)
         return {"runtime": runtime, "logs": logs, "provider": _runtime_provider()}
+
+    @r.post("/workspaces/{workspace_id}/runtime/ensure-preview")
+    async def ensure_workspace_preview(workspace_id: str, user=Depends(current_user)):
+        workspace = await _workspace(workspace_id, user)
+        repo = await _repo(workspace["repo_id"], user)
+        runtime = await _runtime_session(workspace_id, user)
+        if not runtime:
+            raise HTTPException(400, "Start runtime first")
+        runtime = await _upgrade_runtime_to_current_provider(runtime, workspace_id)
+        if runtime.get("provider") != "daytona" or not runtime.get("capabilities", {}).get("commands"):
+            return {"ok": True, "status": runtime.get("status"), "runtime": runtime}
+
+        repo_token = await _installation_token(repo["installation_id"]) if repo.get("provider") == "github" else None
+        loaded_bootstrap = await _ensure_runtime_bootstrap_files(workspace, repo)
+        files = await _active_files(workspace_id)
+        command = runtime.get("dev_command") or "npm run dev"
+
+        try:
+            if not runtime.get("provider_runtime_id"):
+                bridge = _daytona_create_and_sync(runtime, files, repo=repo, token=repo_token)
+                runtime.update({
+                    "provider_runtime_id": bridge["sandbox_id"],
+                    "root_path": bridge["root_path"],
+                    "status": "ready",
+                })
+                await db.runtime_sessions.update_one(
+                    {"id": runtime["id"]},
+                    {"$set": {
+                        "provider_runtime_id": bridge["sandbox_id"],
+                        "root_path": bridge["root_path"],
+                        "status": "ready",
+                        "updated_at": now_iso(),
+                    }},
+                )
+                await _append_runtime_log(runtime["id"], f"Created Daytona sandbox {bridge['sandbox_id']} for preview.")
+            synced = _daytona_sync_files(runtime, files, repo=repo, token=repo_token)
+            if loaded_bootstrap:
+                await _append_runtime_log(runtime["id"], f"Loaded {loaded_bootstrap} missing startup file(s) from GitHub before preview.")
+            await _append_runtime_log(runtime["id"], f"Synced {synced} file(s) before opening preview.")
+            result = _daytona_run_command(runtime, files, command)
+        except Exception as exc:
+            await db.runtime_sessions.update_one(
+                {"id": runtime["id"]},
+                {"$set": {"status": "bridge_error", "updated_at": now_iso()}},
+            )
+            await _append_runtime_log(runtime["id"], f"Preview auto-start failed: {str(exc)[:240]}", "error")
+            raise HTTPException(500, f"Preview auto-start failed: {str(exc)[:240]}")
+
+        updates: dict[str, Any] = {
+            "status": result["status"],
+            "last_command": command,
+            "last_exit_code": result.get("exit_code"),
+            "updated_at": now_iso(),
+        }
+        if result.get("preview_url"):
+            updates["preview_url"] = result["preview_url"]
+            updates["preview_port"] = result.get("preview_port")
+        await db.runtime_sessions.update_one({"id": runtime["id"]}, {"$set": updates})
+        await _append_runtime_log(runtime["id"], result.get("output", "Preview is ready."))
+        runtime = await db.runtime_sessions.find_one({"id": runtime["id"]}, {"_id": 0})
+        logs = await db.runtime_logs.find(
+            {"runtime_id": runtime["id"]}, {"_id": 0}
+        ).sort("created_at", 1).to_list(200)
+        return {"ok": True, "status": runtime.get("status"), "runtime": runtime, "logs": logs}
 
     def _preview_user_from_request(request: Request) -> dict:
         auth = request.headers.get("authorization", "")

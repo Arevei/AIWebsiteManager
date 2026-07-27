@@ -37,32 +37,34 @@ export default function App() {
   return (
     <div className="App">
       <AuthProvider>
-        <BrowserRouter>
-          <Toaster position="top-center" richColors />
-          <Routes>
-            {/* <Route path="/" element={<Landing />} /> */}
-            <Route path="/" element={<Home />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<Signup />} />
-            <Route path="/s/:slug" element={<TenantSite />} />
+        <ThemeProvider>
+          <BrowserRouter>
+            <Toaster position="top-center" richColors />
+            <Routes>
+              {/* <Route path="/" element={<Landing />} /> */}
+              <Route path="/" element={<Home />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/signup" element={<Signup />} />
+              <Route path="/s/:slug" element={<TenantSite />} />
 
-            <Route path="/admin" element={<Protected><Dashboard /></Protected>} />
-            <Route path="/admin/dev" element={<Protected><DeveloperPlatform /></Protected>} />
-            <Route path="/admin/agent" element={<Protected><Agent /></Protected>} />
-            <Route path="/admin/ai" element={<Protected><AIStudio /></Protected>} />
-            <Route path="/admin/talk" element={<Protected><Talk /></Protected>} />
-            <Route path="/admin/content" element={<Protected><ContentEditor /></Protected>} />
-            <Route path="/admin/design" element={<Protected><DesignSettings /></Protected>} />
-            <Route path="/admin/seo" element={<Protected><SEO /></Protected>} />
-            <Route path="/admin/versions" element={<Protected><Versions /></Protected>} />
-            <Route path="/admin/team" element={<Protected><Team /></Protected>} />
-            <Route path="/admin/billing" element={<Protected><Billing /></Protected>} />
+              <Route path="/admin" element={<Protected><Dashboard /></Protected>} />
+              <Route path="/admin/dev" element={<Protected><DeveloperPlatform /></Protected>} />
+              <Route path="/admin/agent" element={<Protected><Agent /></Protected>} />
+              <Route path="/admin/ai" element={<Protected><AIStudio /></Protected>} />
+              <Route path="/admin/talk" element={<Protected><Talk /></Protected>} />
+              <Route path="/admin/content" element={<Protected><ContentEditor /></Protected>} />
+              <Route path="/admin/design" element={<Protected><DesignSettings /></Protected>} />
+              <Route path="/admin/seo" element={<Protected><SEO /></Protected>} />
+              <Route path="/admin/versions" element={<Protected><Versions /></Protected>} />
+              <Route path="/admin/team" element={<Protected><Team /></Protected>} />
+              <Route path="/admin/billing" element={<Protected><Billing /></Protected>} />
 
-            <Route path="/super" element={<Protected role="super_admin"><SuperAdmin /></Protected>} />
+              <Route path="/super" element={<Protected role="super_admin"><SuperAdmin /></Protected>} />
 
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </BrowserRouter>
+        </ThemeProvider>
       </AuthProvider>
     </div>
   );

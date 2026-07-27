@@ -27,7 +27,7 @@ export default function AdminShell({ children, title, subtitle, actions }) {
           <Link to="/admin" className="font-display text-xl font-extrabold tracking-tighter shrink-0" data-testid="brand-link">
             AREVEI<span className="text-[color:var(--ar-accent)]">.</span>
           </Link>
-          <nav className="hidden md:flex items-center gap-1 text-[13px] font-medium overflow-x-auto">
+          <nav className="flex max-w-[calc(100vw-220px)] items-center gap-1 overflow-x-auto text-[12px] font-medium">
             {TOP_NAV.map((n) => {
               const active = loc.pathname === n.to || (n.to !== "/admin" && loc.pathname.startsWith(n.to));
               return (
@@ -35,7 +35,7 @@ export default function AdminShell({ children, title, subtitle, actions }) {
                   key={n.to}
                   to={n.to}
                   data-testid={`nav-${n.label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
-                  className={`px-3.5 py-1.5 rounded-full whitespace-nowrap transition-colors ${active ? "bg-[color:var(--ar-ink)] text-[color:var(--ar-bg)]" : "text-[color:var(--ar-ink-2)] hover:text-[color:var(--ar-ink)] hover:bg-[color:var(--ar-surface)]"}`}
+                  className={`px-2.5 py-1.5 rounded-full whitespace-nowrap transition-colors ${active ? "bg-[color:var(--ar-ink)] text-[color:var(--ar-bg)]" : "text-[color:var(--ar-ink-2)] hover:text-[color:var(--ar-ink)] hover:bg-[color:var(--ar-surface)]"}`}
                 >
                   {n.label}
                 </Link>

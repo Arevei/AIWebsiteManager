@@ -4,7 +4,7 @@ import { Sun, Moon } from "@phosphor-icons/react";
 const ThemeCtx = createContext({ theme: "light", toggle: () => {} });
 
 function initialTheme() {
-  const stored = localStorage.getItem("arevei-theme");
+  const stored = localStorage.getItem("arevei-theme") || localStorage.getItem("arevei_workspace_theme");
   if (stored === "light" || stored === "dark") return stored;
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
@@ -14,6 +14,9 @@ export function ThemeProvider({ children }) {
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
+    localStorage.setItem("arevei-theme", theme);
+    localStorage.setItem("arevei_workspace_theme", theme);
+    window.dispatchEvent(new Event("arevei-theme-change"));
   }, [theme]);
 
   useEffect(() => {
@@ -22,13 +25,27 @@ export function ThemeProvider({ children }) {
       if (!localStorage.getItem("arevei-theme")) setTheme(e.matches ? "dark" : "light");
     };
     mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
+    const onStorage = (event) => {
+      if ((event.key === "arevei-theme" || event.key === "arevei_workspace_theme") && (event.newValue === "light" || event.newValue === "dark")) {
+        setTheme(event.newValue);
+      }
+    };
+    const onLocalThemeChange = () => {
+      const stored = localStorage.getItem("arevei-theme") || localStorage.getItem("arevei_workspace_theme");
+      if (stored === "light" || stored === "dark") setTheme(stored);
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("arevei-theme-change", onLocalThemeChange);
+    return () => {
+      mq.removeEventListener("change", onChange);
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("arevei-theme-change", onLocalThemeChange);
+    };
   }, []);
 
   const toggle = () =>
     setTheme((t) => {
       const next = t === "dark" ? "light" : "dark";
-      localStorage.setItem("arevei-theme", next);
       return next;
     });
 
