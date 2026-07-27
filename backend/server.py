@@ -51,7 +51,12 @@ if os.environ.get("USE_MOCK_DB", "").lower() == "true":
     mongo_client = AsyncMongoMockClient()
     logger.info("Using in-memory mock MongoDB")
 else:
-    mongo_client = AsyncIOMotorClient(mongo_url, tlsCAFile=certifi.where())
+    mongo_client_options = {}
+    is_local_mongo = (urlsplit(mongo_url).hostname or "").lower() in {"localhost", "127.0.0.1", "::1"}
+    mongo_tls_requested = any(token in mongo_url.lower() for token in ("tls=true", "ssl=true"))
+    if mongo_url.startswith("mongodb+srv://") or (mongo_tls_requested and not is_local_mongo):
+        mongo_client_options["tlsCAFile"] = certifi.where()
+    mongo_client = AsyncIOMotorClient(mongo_url, **mongo_client_options)
 db = mongo_client[os.environ["DB_NAME"]]
 logger.info(
     "Mongo persistence configured: mock=%s db=%s host=%s",

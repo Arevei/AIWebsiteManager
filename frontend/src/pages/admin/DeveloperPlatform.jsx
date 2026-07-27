@@ -485,6 +485,7 @@ export default function DeveloperPlatform() {
     const auth = token ? `?arevei_token=${encodeURIComponent(token)}` : "";
     return `${API}/workspaces/${workspace.id}/runtime/preview-proxy${auth}`;
   }, [workspace?.id, runtime?.preview_url]);
+  const visiblePreviewUrl = previewFrameUrl || runtime?.preview_url || "";
 
   useEffect(() => {
     localStorage.setItem("arevei_sidebar_open", String(sidebarOpen));
@@ -1299,11 +1300,11 @@ export default function DeveloperPlatform() {
                         </span>
                         <input
                           readOnly
-                          value={runtime.preview_url}
+                          value={visiblePreviewUrl}
                           className={cx("min-w-0 flex-1 rounded border px-2 py-1 font-mono text-xs outline-none", p.input)}
                           onFocus={(event) => event.currentTarget.select()}
                         />
-                        <a href={runtime.preview_url} target="_blank" rel="noreferrer" className={cx("grid h-7 w-8 place-items-center rounded border", p.inverseButton)} title="Open preview in new tab">
+                        <a href={visiblePreviewUrl} target="_blank" rel="noreferrer" className={cx("grid h-7 w-8 place-items-center rounded border", p.inverseButton)} title="Open preview in new tab">
                           <ArrowSquareOut size={15} />
                         </a>
                       </div>

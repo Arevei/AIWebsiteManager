@@ -2327,8 +2327,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         ).sort("created_at", 1).to_list(200)
         return {"runtime": runtime, "logs": logs, "provider": _runtime_provider()}
 
-    @r.post("/workspaces/{workspace_id}/runtime/ensure-preview")
-    async def ensure_workspace_preview(workspace_id: str, user=Depends(current_user)):
+    async def _ensure_workspace_preview_runtime(workspace_id: str, user: dict) -> dict:
         workspace = await _workspace(workspace_id, user)
         repo = await _repo(workspace["repo_id"], user)
         runtime = await _runtime_session(workspace_id, user)
@@ -2391,6 +2390,10 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         ).sort("created_at", 1).to_list(200)
         return {"ok": True, "status": runtime.get("status"), "runtime": runtime, "logs": logs}
 
+    @r.post("/workspaces/{workspace_id}/runtime/ensure-preview")
+    async def ensure_workspace_preview(workspace_id: str, user=Depends(current_user)):
+        return await _ensure_workspace_preview_runtime(workspace_id, user)
+
     def _preview_user_from_request(request: Request) -> dict:
         auth = request.headers.get("authorization", "")
         token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
@@ -2409,6 +2412,15 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         user = _preview_user_from_request(request)
         await _workspace(workspace_id, user)
         runtime = await _runtime_session(workspace_id, user)
+        if not runtime:
+            raise HTTPException(404, "Runtime is not ready. Start the workspace runtime first.")
+        if (
+            runtime.get("provider") == "daytona"
+            and runtime.get("capabilities", {}).get("commands")
+            and (not runtime.get("preview_url") or runtime.get("status") in {"stopped", "bridge_error", "ready", "command_succeeded"})
+        ):
+            ensured = await _ensure_workspace_preview_runtime(workspace_id, user)
+            runtime = ensured.get("runtime") or runtime
         if not runtime or not runtime.get("preview_url"):
             raise HTTPException(404, "Preview URL is not ready. Run the dev server first.")
         base_parts = urlsplit(runtime["preview_url"])

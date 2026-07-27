@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { api } from "../../lib/api";
+import { API, api, getToken } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import {
   ArrowRight,
@@ -31,6 +31,13 @@ import {
 const LOGO = "/arevei-logo-mark.png";
 const MARK = "/arevei-logo-mark.png";
 const CONTACT_EMAIL = "vinay@arevei.com";
+
+function workspacePreviewUrl(workspaceId) {
+  if (!workspaceId) return "";
+  const token = getToken();
+  const auth = token ? `?arevei_token=${encodeURIComponent(token)}` : "";
+  return `${API}/workspaces/${workspaceId}/runtime/preview-proxy${auth}`;
+}
 
 function demoNotice() {
   window.alert(`This is demo website content. Kindly contact with Arevei Team for website manager.\n\n${CONTACT_EMAIL}`);
@@ -227,8 +234,9 @@ function SiteMock({ compact = false }) {
 }
 
 function BuildProgress({ build, siteSlug, onDashboard }) {
-  const previewHref = build.previewUrl || (siteSlug ? `/s/${siteSlug}` : "/admin/dev");
-  const hasWorkspacePreview = Boolean(build.previewUrl);
+  const proxiedPreviewUrl = workspacePreviewUrl(build.workspaceId);
+  const previewHref = proxiedPreviewUrl || build.previewUrl || (siteSlug ? `/s/${siteSlug}` : "/admin/dev");
+  const hasWorkspacePreview = Boolean(proxiedPreviewUrl || build.previewUrl);
   const steps = [
     ["Understanding Your Business", "Analyzing your business details and goals"],
     ["Planning Your Website", "Creating sitemap and strategy"],
@@ -303,7 +311,7 @@ function BuildProgress({ build, siteSlug, onDashboard }) {
               {hasWorkspacePreview ? (
                 <iframe
                   title="Workspace preview"
-                  src={build.previewUrl}
+                  src={proxiedPreviewUrl || build.previewUrl}
                   className="h-[320px] w-full rounded-xl border border-white/[.08] bg-[#091018]"
                 />
               ) : (
@@ -665,8 +673,10 @@ function DashboardHome({ site, userName, mode, setMode, build }) {
     [ChartLineUp, "Conversion Rate (7d)", "2.58%", "15.9%"],
     [Clock, "Avg. Session Duration (7d)", "2m 46s", "9.4%"],
   ];
-  const liveHref = build.previewUrl || (site?.slug ? `/s/${site.slug}` : "/admin/dev");
-  const hasWorkspacePreview = Boolean(build.previewUrl);
+  const proxiedPreviewUrl = workspacePreviewUrl(build.workspaceId);
+  const liveHref = proxiedPreviewUrl || build.previewUrl || (site?.slug ? `/s/${site.slug}` : "/admin/dev");
+  const hasWorkspacePreview = Boolean(proxiedPreviewUrl || build.previewUrl);
+  const displayDomain = site?.domain || "";
   const panelMap = {
     meetings: {
       title: "Meetings",
@@ -896,7 +906,7 @@ function DashboardHome({ site, userName, mode, setMode, build }) {
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[#49e8ca0a] text-[#49e8ca]"><GlobeHemisphereWest size={17} /></span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-xs font-medium text-white/72">Website <span className="inline-flex items-center gap-1.5 text-[#49e8ca]"><span className="h-1.5 w-1.5 rounded-full bg-[#49e8ca]" /> Live</span></div>
-                    <div className="mt-1 truncate text-xs text-white/38">{site?.slug || "demobiz"}.com</div>
+                    <div className="mt-1 truncate text-xs text-white/38">{displayDomain}</div>
                   </div>
                   <a href={liveHref} target="_blank" rel="noreferrer" className="rounded-lg border border-white/[.08] px-3 py-2 text-xs text-white/65 transition-colors hover:border-white/15 hover:text-white">View site</a>
                 </div>
@@ -919,14 +929,17 @@ function DashboardHome({ site, userName, mode, setMode, build }) {
                     {hasWorkspacePreview ? (
                       <iframe
                         title="Workspace preview"
-                        src={build.previewUrl}
+                        src={proxiedPreviewUrl || build.previewUrl}
                         className="h-[180px] w-full rounded-xl border border-white/[.08] bg-[#091018]"
                       />
                     ) : (
                       <SiteMock compact />
                     )}
                     <div className="min-w-0">
-                      <div className="break-words text-lg font-semibold leading-6">{site?.slug || "demobiz"}.com <span className="ml-1 inline-flex rounded-full bg-[#49e8ca12] px-2 py-0.5 align-middle text-xs font-medium text-[#49e8ca]">Live</span></div>
+                      <div className="break-words text-lg font-semibold leading-6">
+                        {displayDomain}
+                        <span className="ml-1 inline-flex rounded-full bg-[#49e8ca12] px-2 py-0.5 align-middle text-xs font-medium text-[#49e8ca]">Live</span>
+                      </div>
                       <div className="mt-3 text-sm text-white/55">Last updated: 2 mins ago</div>
                       <div className="mt-6 space-y-3 text-sm text-white/62">
                         <div className="flex justify-between"><span>Pages</span><span>12</span></div>
@@ -973,7 +986,7 @@ function DashboardHome({ site, userName, mode, setMode, build }) {
                         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#49e8ca0a] text-[#49e8ca]"><FileText size={15} /></span>
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium">{item}</div>
-                          <div className="mt-1 truncate text-xs text-white/38">{index === 0 ? "How AI Can Grow Your Business" : index === 1 ? "/services" : index === 2 ? "info@demobiz.com" : "May 12, 2024 - 3:00 AM"}</div>
+                          <div className="mt-1 truncate text-xs text-white/38">{index === 0 ? "How AI Can Grow Your Business" : index === 1 ? "/services" : index === 2 ? "" : "May 12, 2024 - 3:00 AM"}</div>
                           <div className="mt-2 text-[11px] text-white/28">{[2, 5, 8, 10][index]}h ago</div>
                         </div>
                       </div>
