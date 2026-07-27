@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
@@ -80,54 +80,54 @@ function SetupWelcome({ onFillDemo }) {
   return (
     <Shell>
       <main className="mx-auto flex min-h-screen max-w-[1180px] flex-col items-center justify-center px-6 py-10 text-center">
-        <Brand className="aw-reveal mb-12" />
-        <div className="aw-reveal aw-delay-1 mb-8 inline-flex items-center gap-2 rounded-xl border border-[#36ebcc55] bg-[#091a17]/80 px-5 py-3 text-xl font-semibold text-[#55f5d8] shadow-[0_0_34px_rgba(54,235,204,.18)]">
-          <Sparkle size={23} /> Welcome to Arevei
+        <Brand className="aw-reveal mb-8" />
+        <div className="aw-reveal aw-delay-1 mb-7 inline-flex items-center gap-2 rounded-xl border border-[#36ebcc55] bg-[#091a17]/80 px-4 py-2 text-base font-semibold text-[#55f5d8] shadow-[0_0_34px_rgba(54,235,204,.18)]">
+          <Sparkle size={20} /> Welcome to Arevei
         </div>
-        <h1 className="aw-reveal aw-delay-2 max-w-[860px] text-[52px] font-extrabold leading-[1.04] tracking-[-.02em] md:text-[74px]">
+        <h1 className="aw-reveal aw-delay-2 max-w-[820px] text-[44px] font-extrabold leading-[1.04] tracking-[-.01em] md:text-[64px]">
           Let's set up your <span className="block text-[#4ce8ca]">AI Website Manager</span>
         </h1>
-        <p className="aw-reveal aw-delay-3 mt-7 max-w-[620px] text-[23px] leading-[1.55] text-white/72">
+        <p className="aw-reveal aw-delay-3 mt-6 max-w-[560px] text-[19px] leading-[1.55] text-white/72">
           Arevei helps you build, manage and grow your website on autopilot
         </p>
 
-        <div className="aw-reveal aw-delay-4 mt-12 grid w-full gap-7 text-left md:grid-cols-3">
+        <div className="aw-reveal aw-delay-4 mt-10 grid w-full gap-6 text-left md:grid-cols-3">
           {[
             [Sparkle, "AI-Powered Management", "Automate content, updates and optimizations with intelligent AI agents."],
             [ChartLineUp, "Real-Time Insights", "Track performance, traffic and growth with live analytics."],
             [RocketLaunch, "Continuous Growth", "From SEO to speed we constantly improve your website for better results."],
           ].map(([Icon, title, body]) => (
             <div key={title} className="flex gap-5 border-white/10 md:border-r md:pr-8 last:border-r-0">
-              <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full bg-[#10251f] text-[#4ce8ca] shadow-[0_0_30px_rgba(76,232,202,.12)]"><Icon size={31} /></div>
+              <div className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-full bg-[#10251f] text-[#4ce8ca] shadow-[0_0_30px_rgba(76,232,202,.12)]"><Icon size={27} /></div>
               <div>
-                <div className="text-lg font-bold">{title}</div>
-                <div className="mt-2 text-lg leading-7 text-white/72">{body}</div>
+                <div className="text-base font-bold">{title}</div>
+                <div className="mt-2 text-[15px] leading-6 text-white/72">{body}</div>
               </div>
             </div>
           ))}
         </div>
 
-        <div className="aw-reveal aw-delay-5 mt-16 grid w-full max-w-[840px] gap-5 md:grid-cols-[1.12fr_.96fr]">
-          <button onClick={onFillDemo} className="aw-primary-choice group flex h-[96px] items-center justify-between rounded-2xl bg-[#49e8ca] px-8 text-left text-black shadow-[0_0_60px_rgba(73,232,202,.28)]">
-            <span className="flex items-center gap-6">
-              <Sparkle size={34} />
+        <div className="aw-reveal aw-delay-5 mt-12 grid w-full max-w-[790px] gap-4 md:grid-cols-[1.12fr_.96fr]">
+          <button onClick={onFillDemo} className="aw-primary-choice group flex h-[78px] items-center justify-between rounded-xl bg-[#49e8ca] px-6 text-left text-black shadow-[0_0_60px_rgba(73,232,202,.28)]">
+            <span className="flex items-center gap-5">
+              <Sparkle size={29} />
               <span>
-                <span className="block text-[22px] font-extrabold">Fill Demo Data</span>
+                <span className="block text-[19px] font-extrabold">Fill Demo Data</span>
                 <span className="text-[15px]">Experience Arevei with sample data</span>
               </span>
             </span>
-            <ArrowRight size={30} className="transition group-hover:translate-x-1" />
+            <ArrowRight size={25} className="transition group-hover:translate-x-1" />
           </button>
-          <button onClick={demoNotice} className="aw-glass-card flex h-[96px] items-center gap-6 rounded-2xl px-8 text-left text-white/90 hover:border-[#49e8ca99]">
-            <FileText size={35} className="text-[#49e8ca]" />
+          <button onClick={demoNotice} className="aw-glass-card flex h-[78px] items-center gap-5 rounded-xl px-6 text-left text-white/90 hover:border-[#49e8ca99]">
+            <FileText size={29} className="text-[#49e8ca]" />
             <span>
-              <span className="block text-[22px] font-bold">Start Empty</span>
+              <span className="block text-[19px] font-bold">Start Empty</span>
               <span className="text-[15px] text-white/58">Set up manually from scratch</span>
             </span>
           </button>
         </div>
 
-        <div className="aw-reveal aw-delay-6 mt-9 flex max-w-[560px] items-center justify-center gap-3 text-lg leading-7 text-white/58">
+        <div className="aw-reveal aw-delay-6 mt-8 flex max-w-[560px] items-center justify-center gap-3 text-[15px] leading-6 text-white/58">
           <ShieldCheck size={26} /> Your data is secure with Arevei. You can change or remove demo data anytime.
         </div>
       </main>
@@ -139,7 +139,7 @@ function ChooseFlow({ userName, onBuild, onDashboard, building }) {
   return (
     <Shell>
       <main className="min-h-screen px-6 py-6">
-        <header className="aw-glass-card mx-auto flex h-[78px] max-w-[1540px] items-center justify-between rounded-2xl px-6">
+        <header className="aw-glass-card mx-auto flex h-[70px] max-w-[1540px] items-center justify-between rounded-xl px-6">
           <Brand />
           <div className="flex items-center gap-5">
             <Bell size={24} className="text-white/70" />
@@ -147,41 +147,41 @@ function ChooseFlow({ userName, onBuild, onDashboard, building }) {
           </div>
         </header>
         <section className="mx-auto flex max-w-[1200px] flex-col items-center pt-12 text-center">
-          <div className="aw-bot-orbit mb-9">
+          <div className="aw-bot-orbit mb-8">
             <RobotFace large />
           </div>
-          <h1 className="aw-reveal text-[48px] font-extrabold leading-[1.18] tracking-[-.02em] md:text-[58px]">
+          <h1 className="aw-reveal text-[38px] font-extrabold leading-[1.18] tracking-[-.01em] md:text-[52px]">
             Hey, I am <span className="text-[#49e8ca]">Arevei,</span><br />
             I am your <span className="text-[#49e8ca]">Pilot</span> for your website growth
           </h1>
-          <p className="aw-reveal aw-delay-1 mt-7 max-w-[650px] text-[22px] leading-9 text-white/67">
+          <p className="aw-reveal aw-delay-1 mt-6 max-w-[620px] text-[18px] leading-8 text-white/67">
             I'll help you build, manage, and grow your website on autopilot with the power of AI.
           </p>
 
-          <div className="aw-reveal aw-delay-2 mt-14 grid w-full gap-7 text-left lg:grid-cols-3">
-            <button onClick={onBuild} disabled={building} className="aw-flow-card aw-flow-card-active group min-h-[166px] disabled:opacity-70">
-              <span className="grid h-16 w-16 place-items-center rounded-full bg-[#c7ff4a22] text-[#c7ff4a]"><SquaresFour size={33} /></span>
+          <div className="aw-reveal aw-delay-2 mt-12 grid w-full gap-6 text-left lg:grid-cols-3">
+            <button onClick={onBuild} disabled={building} className="aw-flow-card aw-flow-card-active group min-h-[136px] disabled:opacity-70">
+              <span className="grid h-14 w-14 place-items-center rounded-full bg-[#c7ff4a22] text-[#c7ff4a]"><SquaresFour size={28} /></span>
               <span className="min-w-0 flex-1">
-                <span className="block text-[22px] font-bold text-[#c7ff4a]">{building ? "Loading Template" : "Build Website"}</span>
-                <span className="mt-2 block text-lg leading-7 text-white/68">Create a new website from scratch with Arevei</span>
+                <span className="block text-[19px] font-bold text-[#c7ff4a]">{building ? "Loading Template" : "Build Website"}</span>
+                <span className="mt-2 block text-[15px] leading-6 text-white/68">Create a new website from scratch with Arevei</span>
               </span>
-              <span className="grid h-11 w-11 place-items-center rounded-full bg-[#c7ff4a] text-black"><ArrowRight size={25} /></span>
+              <span className="grid h-10 w-10 place-items-center rounded-full bg-[#c7ff4a] text-black"><ArrowRight size={22} /></span>
             </button>
-            <button onClick={demoNotice} className="aw-flow-card group min-h-[166px]">
-              <span className="grid h-16 w-16 place-items-center rounded-full bg-[#10302b] text-[#49e8ca]"><Headset size={33} /></span>
+            <button onClick={demoNotice} className="aw-flow-card group min-h-[136px]">
+              <span className="grid h-14 w-14 place-items-center rounded-full bg-[#10302b] text-[#49e8ca]"><Headset size={28} /></span>
               <span className="min-w-0 flex-1">
-                <span className="block text-[22px] font-bold">Migrate Website with Arevei</span>
-                <span className="mt-2 block text-lg leading-7 text-white/62">We'll migrate your existing website and optimize it</span>
+                <span className="block text-[19px] font-bold">Migrate Website with Arevei</span>
+                <span className="mt-2 block text-[15px] leading-6 text-white/62">We'll migrate your existing website and optimize it</span>
               </span>
-              <ArrowRight size={25} className="text-[#49e8ca]" />
+              <ArrowRight size={22} className="text-[#49e8ca]" />
             </button>
-            <button onClick={onDashboard} className="aw-flow-card group min-h-[166px]">
-              <span className="grid h-16 w-16 place-items-center rounded-full bg-white/8 text-white"><ArrowRight size={33} /></span>
+            <button onClick={onDashboard} className="aw-flow-card group min-h-[136px]">
+              <span className="grid h-14 w-14 place-items-center rounded-full bg-white/8 text-white"><ArrowRight size={28} /></span>
               <span className="min-w-0 flex-1">
-                <span className="block text-[22px] font-bold">Skip to Dashboard</span>
-                <span className="mt-2 block text-lg leading-7 text-white/62">Explore your dashboard and features</span>
+                <span className="block text-[19px] font-bold">Skip to Dashboard</span>
+                <span className="mt-2 block text-[15px] leading-6 text-white/62">Explore your dashboard and features</span>
               </span>
-              <ArrowRight size={25} className="text-white/48" />
+              <ArrowRight size={22} className="text-white/48" />
             </button>
           </div>
 
@@ -226,6 +226,7 @@ function SiteMock({ compact = false }) {
 
 function BuildProgress({ build, siteSlug, onDashboard }) {
   const previewHref = build.previewUrl || (siteSlug ? `/s/${siteSlug}` : "/admin/dev");
+  const hasWorkspacePreview = Boolean(build.previewUrl);
   const steps = [
     ["Understanding Your Business", "Analyzing your business details and goals"],
     ["Planning Your Website", "Creating sitemap and strategy"],
@@ -298,7 +299,15 @@ function BuildProgress({ build, siteSlug, onDashboard }) {
                 <div><div className="font-semibold">Live Preview</div><div className="text-sm text-white/55">This is a live preview of your website being built.</div></div>
                 <div className="flex rounded-xl bg-white/7 p-1 text-white/55"><button className="rounded-lg bg-[#12463f] p-3 text-[#49e8ca]"><Monitor /></button><button className="p-3"><SquaresFour /></button></div>
               </div>
-              <SiteMock />
+              {hasWorkspacePreview ? (
+                <iframe
+                  title="Workspace preview"
+                  src={build.previewUrl}
+                  className="h-[452px] w-full rounded-2xl border border-white/12 bg-[#091018]"
+                />
+              ) : (
+                <SiteMock />
+              )}
               <div className="mt-6 rounded-2xl border border-white/10 p-5">
                 <div className="flex items-center justify-between text-sm text-white/65"><span>Overall Progress</span><span>Est. time remaining {build.progress >= 100 ? "Ready" : "2 - 3 mins"}</span></div>
                 <div className="mt-2 flex items-center gap-5"><span className="text-3xl font-bold text-[#c7ff4a]">{build.progress}%</span><div className="h-2 flex-1 rounded-full bg-white/8"><div className="aw-progress-fill h-full rounded-full bg-[#49e8ca]" style={{ width: `${build.progress}%` }} /></div></div>
@@ -319,16 +328,19 @@ function BuildProgress({ build, siteSlug, onDashboard }) {
 
 function DashboardHome({ site, userName, mode, setMode, build }) {
   const navigate = useNavigate();
+  const [seo, setSeo] = useState(null);
+  const [versions, setVersions] = useState([]);
+  const [team, setTeam] = useState([]);
+  const [billing, setBilling] = useState(null);
+  const [settingsTab, setSettingsTab] = useState("history");
+  const [inviteEmail, setInviteEmail] = useState("");
   const sidebar = [
     [House, "Dashboard", () => setMode("dashboard"), "dashboard"],
     [Sparkle, "AI Workspace", () => navigate("/admin/dev"), "workspace"],
     [Calendar, "Meetings", () => setMode("meetings"), "meetings"],
     [Brain, "Brain", () => setMode("brain"), "brain"],
-    [TrendUp, "Growth", () => navigate("/admin/seo"), "growth"],
-    [FileText, "Content", () => setMode("content"), "content"],
-    [ChartLineUp, "Analytics", () => setMode("analytics"), "analytics"],
-    [FileText, "Reports", () => setMode("reports"), "reports"],
-    [GearSix, "Settings", () => navigate("/admin/settings"), "settings"],
+    [TrendUp, "Growth", () => setMode("growth"), "growth"],
+    [GearSix, "Settings", () => setMode("settings"), "settings"],
   ];
   const stats = [
     [UsersThree, "Visitors (7d)", "12.4K", "18.6%"],
@@ -338,6 +350,7 @@ function DashboardHome({ site, userName, mode, setMode, build }) {
     [Clock, "Avg. Session Duration (7d)", "2m 46s", "9.4%"],
   ];
   const liveHref = build.previewUrl || (site?.slug ? `/s/${site.slug}` : "/admin/dev");
+  const hasWorkspacePreview = Boolean(build.previewUrl);
   const panelMap = {
     meetings: {
       title: "Meetings",
@@ -348,35 +361,42 @@ function DashboardHome({ site, userName, mode, setMode, build }) {
         ["Friday, 3:00 PM", "Growth report", "Share weekly traffic, conversion, and content progress."],
       ],
     },
-    content: {
-      title: "Content Pipeline",
-      body: "Content Arevei is preparing for your website and growth channels.",
-      items: [
-        ["Ready", "Homepage value proposition", "Updated hero, services summary, and conversion CTA."],
-        ["Drafting", "How AI can grow your business", "Blog article with SEO title, summary, and FAQs."],
-        ["Queued", "Services page FAQ", "Short answers for buyer objections and search snippets."],
-      ],
-    },
-    analytics: {
-      title: "Analytics",
-      body: "Live website signals Arevei uses to choose the next optimization.",
-      items: [
-        ["Traffic", "12.4K visitors", "Organic discovery is up 18.6% over the previous 7 days."],
-        ["Engagement", "2m 46s average session", "Visitors are spending more time on service content."],
-        ["Conversion", "320 leads", "Contact clicks and form starts are trending upward."],
-      ],
-    },
-    reports: {
-      title: "Reports",
-      body: "Readable summaries for what changed, why it changed, and what comes next.",
-      items: [
-        ["Weekly", "Growth summary", "Traffic, lead quality, SEO movement, and next actions."],
-        ["Technical", "Website health", "Performance, accessibility, broken links, and metadata."],
-        ["Content", "Publishing plan", "Blog ideas, keyword targets, and internal links."],
-      ],
-    },
   };
   const activePanel = panelMap[mode];
+
+  useEffect(() => {
+    if (mode !== "growth" || seo) return;
+    api.get("/seo").then((r) => setSeo(r.data)).catch(() => setSeo({}));
+  }, [mode, seo]);
+
+  useEffect(() => {
+    if (mode !== "settings") return;
+    api.get("/versions").then((r) => setVersions(r.data || [])).catch(() => setVersions([]));
+    api.get("/team").then((r) => setTeam(r.data || [])).catch(() => setTeam([]));
+    api.get("/billing").then((r) => setBilling(r.data)).catch(() => setBilling(null));
+  }, [mode]);
+
+  const saveSeo = async () => {
+    try {
+      await api.put("/seo", seo || {});
+      toast.success("Growth settings saved");
+    } catch {
+      toast.error("Growth save failed");
+    }
+  };
+
+  const inviteTeam = async () => {
+    if (!inviteEmail.trim()) return;
+    try {
+      await api.post("/team/invite", { email: inviteEmail, role: "team_member", permission: "editor" });
+      toast.success("Invite created");
+      setInviteEmail("");
+      const r = await api.get("/team");
+      setTeam(r.data || []);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Invite failed");
+    }
+  };
 
   return (
     <Shell>
@@ -425,6 +445,118 @@ function DashboardHome({ site, userName, mode, setMode, build }) {
                   </div>
                 ))}
               </div>
+            </section>
+          ) : mode === "growth" ? (
+            <section className="aw-reveal">
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h1 className="text-[34px] font-bold tracking-[-.01em]">Growth</h1>
+                  <p className="mt-2 max-w-2xl text-[15px] leading-7 text-white/58">SEO, AEO, GEO, schema, and AI citation signals managed from the same dashboard surface.</p>
+                </div>
+                <button onClick={saveSeo} className="h-10 rounded-xl bg-[#49e8ca] px-5 text-sm font-bold text-black">Save Growth</button>
+              </div>
+              <div className="mb-5 grid gap-px overflow-hidden rounded-2xl border border-white/10 bg-white/10 md:grid-cols-3">
+                {[
+                  ["SEO Score", "93", "Indexable + meta complete"],
+                  ["AEO Coverage", `${seo?.aeo_coverage ?? 88}%`, "FAQ + answer blocks"],
+                  ["GEO Readiness", `${seo?.geo_readiness ?? 76}%`, "Citable structured content"],
+                ].map(([label, value, note]) => (
+                  <div key={label} className="bg-[#071011]/92 p-5">
+                    <div className="text-xs uppercase tracking-[.16em] text-white/42">{label}</div>
+                    <div className="mt-2 text-[32px] font-bold">{value}</div>
+                    <div className="mt-1 text-xs text-white/48">{note}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="grid gap-5 lg:grid-cols-[1fr_.78fr]">
+                <div className="aw-glass-card rounded-2xl p-5">
+                  <div className="mb-4 text-sm font-semibold text-[#49e8ca]">Meta Tags</div>
+                  <label className="mb-4 block">
+                    <span className="mb-2 block text-xs uppercase tracking-[.16em] text-white/42">Meta title</span>
+                    <input value={seo?.meta_title || ""} onChange={(e) => setSeo({ ...(seo || {}), meta_title: e.target.value })} className="h-11 w-full rounded-xl border border-white/10 bg-white/[.035] px-3 text-sm outline-none focus:border-[#49e8ca88]" />
+                  </label>
+                  <label className="mb-4 block">
+                    <span className="mb-2 block text-xs uppercase tracking-[.16em] text-white/42">Meta description</span>
+                    <textarea rows={4} value={seo?.meta_description || ""} onChange={(e) => setSeo({ ...(seo || {}), meta_description: e.target.value })} className="w-full resize-none rounded-xl border border-white/10 bg-white/[.035] p-3 text-sm leading-6 outline-none focus:border-[#49e8ca88]" />
+                  </label>
+                  <label className="block">
+                    <span className="mb-2 block text-xs uppercase tracking-[.16em] text-white/42">Keywords</span>
+                    <input value={(seo?.keywords || []).join(", ")} onChange={(e) => setSeo({ ...(seo || {}), keywords: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} className="h-11 w-full rounded-xl border border-white/10 bg-white/[.035] px-3 text-sm outline-none focus:border-[#49e8ca88]" />
+                  </label>
+                </div>
+                <div className="aw-glass-card rounded-2xl p-5">
+                  <div className="mb-4 text-sm font-semibold text-[#49e8ca]">Schema Status</div>
+                  <div className="space-y-3">
+                    {Object.entries(seo?.schema_status || { organization: true, website: true, faq: false }).map(([key, value]) => (
+                      <div key={key} className="flex items-center justify-between rounded-xl border border-white/8 bg-white/[.025] px-4 py-3 text-sm">
+                        <span className="capitalize">{key.replaceAll("_", " ")}</span>
+                        <span className={value ? "text-[#49e8ca]" : "text-[#c7ff4a]"}>{value ? "OK" : "Needs update"}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-5 text-sm font-semibold text-[#49e8ca]">AI Suggestions</div>
+                  <div className="mt-3 space-y-3 text-sm text-white/62">
+                    {(seo?.suggestions || ["Add FAQ answers to the services page.", "Improve internal links from homepage to service pages."]).map((item, index) => (
+                      <div key={index} className="rounded-xl border border-white/8 bg-white/[.025] p-3">{item}</div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </section>
+          ) : mode === "settings" ? (
+            <section className="aw-reveal">
+              <div className="mb-6">
+                <h1 className="text-[34px] font-bold tracking-[-.01em]">Settings</h1>
+                <p className="mt-2 text-[15px] leading-7 text-white/58">History, team, and billing in one place without leaving the dashboard.</p>
+              </div>
+              <div className="mb-5 flex flex-wrap gap-2">
+                {["history", "team", "billing"].map((item) => (
+                  <button key={item} onClick={() => setSettingsTab(item)} className={`h-10 rounded-xl border px-4 text-sm capitalize ${settingsTab === item ? "border-[#49e8ca88] bg-[#49e8ca1a] text-[#49e8ca]" : "border-white/10 text-white/62"}`}>{item}</button>
+                ))}
+              </div>
+              {settingsTab === "history" && (
+                <div className="aw-glass-card rounded-2xl p-5">
+                  <div className="mb-4 text-sm font-semibold text-[#49e8ca]">Version History</div>
+                  {(versions.length ? versions : [{ id: "current", summary: "Current workspace state", created_at: "Ready" }]).map((item) => (
+                    <div key={item.id} className="flex items-center justify-between border-b border-white/8 py-3 last:border-b-0">
+                      <div><div className="font-semibold">{item.summary}</div><div className="text-xs text-white/45">{item.created_at}</div></div>
+                      {item.id !== "current" && <button onClick={() => api.post(`/versions/${item.id}/restore`).then(() => toast.success("Version restored"))} className="rounded-lg border border-white/12 px-3 py-1.5 text-xs">Restore</button>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {settingsTab === "team" && (
+                <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
+                  <div className="aw-glass-card rounded-2xl p-5">
+                    <div className="mb-4 text-sm font-semibold text-[#49e8ca]">Team Members</div>
+                    {team.map((member) => (
+                      <div key={member.id || member.email} className="flex items-center justify-between border-b border-white/8 py-3 last:border-b-0">
+                        <div><div className="font-semibold">{member.name || member.email}</div><div className="text-xs text-white/45">{member.email}</div></div>
+                        <span className="text-xs uppercase tracking-[.12em] text-white/45">{member.role}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="aw-glass-card rounded-2xl p-5">
+                    <div className="mb-4 text-sm font-semibold text-[#49e8ca]">Invite</div>
+                    <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="teammate@example.com" className="h-11 w-full rounded-xl border border-white/10 bg-white/[.035] px-3 text-sm outline-none focus:border-[#49e8ca88]" />
+                    <button onClick={inviteTeam} className="mt-3 h-10 w-full rounded-xl bg-[#49e8ca] text-sm font-bold text-black">Create Invite</button>
+                  </div>
+                </div>
+              )}
+              {settingsTab === "billing" && (
+                <div className="grid gap-5 md:grid-cols-3">
+                  {[
+                    ["Plan", billing?.tenant?.plan_tier || "Self-serve"],
+                    ["Billing status", billing?.tenant?.billing_status || "Active"],
+                    ["Monthly", `$${billing?.tenant?.monthly_revenue || 0}`],
+                  ].map(([label, value]) => (
+                    <div key={label} className="aw-glass-card rounded-2xl p-5">
+                      <div className="text-xs uppercase tracking-[.16em] text-white/42">{label}</div>
+                      <div className="mt-3 text-[30px] font-bold">{value}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           ) : activePanel ? (
             <section className="aw-reveal">
@@ -483,7 +615,15 @@ function DashboardHome({ site, userName, mode, setMode, build }) {
                 <div className="aw-glass-card rounded-2xl p-6">
                   <h2 className="mb-5 text-xl font-bold">Website Overview</h2>
                   <div className="grid gap-5 md:grid-cols-[1fr_.72fr]">
-                    <SiteMock compact />
+                    {hasWorkspacePreview ? (
+                      <iframe
+                        title="Workspace preview"
+                        src={build.previewUrl}
+                        className="h-[246px] w-full rounded-2xl border border-white/12 bg-[#091018]"
+                      />
+                    ) : (
+                      <SiteMock compact />
+                    )}
                     <div>
                       <div className="text-xl font-bold">{site?.slug || "demobiz"}.com <span className="rounded-full bg-[#49e8ca22] px-3 py-1 text-sm text-[#49e8ca]">Live</span></div>
                       <div className="mt-3 text-sm text-white/55">Last updated: 2 mins ago</div>
@@ -548,8 +688,12 @@ function DashboardHome({ site, userName, mode, setMode, build }) {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const location = useLocation();
   const [site, setSite] = useState(null);
-  const [mode, setMode] = useState("dashboard");
+  const [mode, setMode] = useState(() => {
+    const view = new URLSearchParams(window.location.search).get("view");
+    return ["growth", "settings", "brain", "meetings"].includes(view) ? view : "dashboard";
+  });
   const [stage, setStage] = useState(() => localStorage.getItem("arevei-demo-stage") || "setup");
   const [building, setBuilding] = useState(false);
   const [build, setBuild] = useState(() => {
@@ -564,6 +708,12 @@ export default function Dashboard() {
   useEffect(() => {
     api.get("/site").then((r) => setSite(r.data)).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const view = new URLSearchParams(location.search).get("view");
+    if (["growth", "settings", "brain", "meetings"].includes(view)) setMode(view);
+    else if (!view) setMode("dashboard");
+  }, [location.search]);
 
   useEffect(() => {
     if (stage !== "build" || (build.progress || 0) >= 46) return;
@@ -589,6 +739,23 @@ export default function Dashboard() {
       return next;
     });
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/workspaces/current").then((res) => {
+      if (cancelled) return;
+      const workspace = res.data?.workspace;
+      const runtime = res.data?.runtime;
+      if (workspace?.id && runtime?.preview_url) {
+        updateBuild({ workspaceId: workspace.id, previewUrl: runtime.preview_url, progress: 100, status: "Ready to review" });
+      } else if (workspace?.id) {
+        updateBuild({ workspaceId: workspace.id });
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+    // updateBuild intentionally writes local persisted preview state for the active workspace.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startBuild = async () => {
     setBuilding(true);

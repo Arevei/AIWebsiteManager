@@ -111,11 +111,63 @@ MOCK_FILES = {
     ),
     "src/App.jsx": (
         "import React from 'react';\n\n"
+        "const services = ['Website strategy', 'SEO systems', 'Conversion pages'];\n\n"
         "export default function App() {\n"
-        "  return <main><h1>Ship something useful.</h1></main>;\n"
+        "  return (\n"
+        "    <main className=\"site-shell\">\n"
+        "      <nav className=\"nav\">\n"
+        "        <div className=\"brand\"><span className=\"brand-dot\" />DemoBiz</div>\n"
+        "        <div className=\"links\"><a href=\"#home\">Home</a><a href=\"#about\">About</a><a href=\"#services\">Services</a><a href=\"#blog\">Blog</a><a href=\"#contact\">Contact</a></div>\n"
+        "        <a className=\"nav-cta\" href=\"#contact\">Get In Touch</a>\n"
+        "      </nav>\n"
+        "      <section id=\"home\" className=\"hero\">\n"
+        "        <div className=\"hero-copy\">\n"
+        "          <span className=\"eyebrow\">We help brands grow</span>\n"
+        "          <h1>We build digital experiences that <strong>drive growth</strong></h1>\n"
+        "          <p>DemoBiz helps businesses grow with stunning websites, smart strategy, SEO foundations, and measurable conversion systems.</p>\n"
+        "          <div className=\"actions\"><a href=\"#services\">Our Services</a><a href=\"#about\" className=\"ghost\">About Us</a></div>\n"
+        "        </div>\n"
+        "        <div className=\"house-art\" aria-hidden=\"true\"><span /><span /><span /></div>\n"
+        "      </section>\n"
+        "      <section className=\"logos\"><span>Trusted by growing brands</span><b>acme</b><b>Cloudify</b><b>Layers</b><b>aven.</b><b>Circooes</b></section>\n"
+        "      <section id=\"services\" className=\"cards\">\n"
+        "        {services.map((item) => <article key={item}><span /> <h2>{item}</h2><p>Built by Arevei to keep your website sharp, searchable, and ready for leads.</p></article>)}\n"
+        "      </section>\n"
+        "    </main>\n"
+        "  );\n"
         "}\n"
     ),
-    "src/index.css": "body { font-family: system-ui, sans-serif; margin: 0; }\n",
+    "src/index.css": (
+        "* { box-sizing: border-box; }\n"
+        "body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #070b0f; color: white; }\n"
+        "a { color: inherit; text-decoration: none; }\n"
+        ".site-shell { min-height: 100vh; background: radial-gradient(circle at 76% 28%, rgba(63, 238, 207, .14), transparent 34%), linear-gradient(135deg, #081018, #05080b 64%, #070b0f); overflow: hidden; }\n"
+        ".nav { height: 78px; display: flex; align-items: center; justify-content: space-between; padding: 0 6vw; border-bottom: 1px solid rgba(255,255,255,.08); }\n"
+        ".brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; }\n"
+        ".brand-dot { width: 14px; height: 14px; border-radius: 999px; background: #c8ff45; box-shadow: 0 0 24px rgba(200,255,69,.5); }\n"
+        ".links { display: flex; align-items: center; gap: 34px; color: rgba(255,255,255,.72); font-size: 14px; }\n"
+        ".nav-cta, .actions a { border-radius: 10px; background: #c8ff45; color: #071014; padding: 13px 22px; font-weight: 800; font-size: 14px; }\n"
+        ".hero { position: relative; min-height: 630px; display: grid; align-items: center; padding: 70px 6vw 90px; }\n"
+        ".hero-copy { position: relative; z-index: 2; max-width: 690px; }\n"
+        ".eyebrow { display: inline-flex; border: 1px solid rgba(200,255,69,.35); color: #c8ff45; border-radius: 999px; padding: 8px 14px; font-size: 13px; margin-bottom: 28px; }\n"
+        "h1 { margin: 0; max-width: 650px; font-size: clamp(46px, 7vw, 76px); line-height: .96; letter-spacing: 0; }\n"
+        "h1 strong { color: #c8ff45; font-style: normal; }\n"
+        "p { color: rgba(255,255,255,.68); font-size: 18px; line-height: 1.7; max-width: 560px; }\n"
+        ".actions { display: flex; gap: 16px; margin-top: 34px; }\n"
+        ".actions .ghost { background: transparent; color: white; border: 1px solid rgba(255,255,255,.28); }\n"
+        ".house-art { position: absolute; right: 4vw; bottom: 0; width: min(620px, 52vw); height: 480px; opacity: .92; background: linear-gradient(130deg, transparent 0 30%, rgba(255,255,255,.12) 30% 31%, transparent 31%), linear-gradient(100deg, rgba(255,176,83,.18), rgba(255,176,83,.42)); clip-path: polygon(12% 42%, 74% 10%, 100% 27%, 100% 100%, 0 100%, 0 56%); filter: drop-shadow(0 34px 80px rgba(0,0,0,.6)); }\n"
+        ".house-art span { position: absolute; background: rgba(255,190,93,.5); border: 1px solid rgba(255,255,255,.18); }\n"
+        ".house-art span:nth-child(1) { left: 25%; top: 40%; width: 28%; height: 24%; }\n"
+        ".house-art span:nth-child(2) { left: 58%; top: 32%; width: 24%; height: 30%; }\n"
+        ".house-art span:nth-child(3) { left: 42%; top: 70%; width: 42%; height: 20%; }\n"
+        ".logos { display: flex; align-items: center; justify-content: space-around; gap: 26px; background: white; color: #20252a; padding: 28px 5vw; flex-wrap: wrap; }\n"
+        ".logos span { color: #5f6871; font-size: 13px; }\n"
+        ".cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; padding: 70px 6vw; }\n"
+        ".cards article { border: 1px solid rgba(255,255,255,.1); border-radius: 18px; background: rgba(255,255,255,.035); padding: 26px; }\n"
+        ".cards article span { display: block; width: 34px; height: 34px; border-radius: 999px; background: #49e8ca; box-shadow: 0 0 30px rgba(73,232,202,.35); }\n"
+        ".cards h2 { margin: 20px 0 8px; }\n"
+        "@media (max-width: 780px) { .links { display: none; } .hero { min-height: 620px; } .house-art { opacity: .45; width: 90vw; } .cards { grid-template-columns: 1fr; } }\n"
+    ),
 }
 
 
@@ -1100,6 +1152,43 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         if is_dev_server:
             port = _infer_preview_port(files, command)
             dev_command = _host_bound_dev_command(files, command, port)
+            install_command = runtime.get("install_command") or _runtime_commands(
+                [f.get("path", "") for f in files],
+                next((f.get("content") for f in files if f.get("path") == "package.json"), None),
+            )["install_command"]
+            dependency_output = ""
+            try:
+                install_response = _daytona_exec(
+                    sandbox,
+                    (
+                        "if [ -f package.json ] && "
+                        "( [ ! -d node_modules ] || (grep -qi '\"vite\"' package.json && [ ! -x node_modules/.bin/vite ]) ); "
+                        f"then {install_command}; "
+                        "else echo 'Dependencies already installed.'; fi"
+                    ),
+                    cwd=root,
+                    timeout=900,
+                )
+                dependency_output = (
+                    getattr(getattr(install_response, "artifacts", None), "stdout", None)
+                    or getattr(install_response, "result", "")
+                    or ""
+                )
+                install_exit = getattr(install_response, "exit_code", None)
+                if install_exit not in (0, None):
+                    return {
+                        "status": "command_failed",
+                        "output": f"Dependency install failed before preview startup.\n\n{dependency_output}",
+                        "exit_code": install_exit,
+                        "preview_port": port,
+                    }
+            except Exception as exc:
+                return {
+                    "status": "command_failed",
+                    "output": f"Dependency install failed before preview startup: {str(exc)[:600]}",
+                    "exit_code": 1,
+                    "preview_port": port,
+                }
             _daytona_exec(
                 sandbox,
                 f"rm -f /tmp/arevei-dev.log; (lsof -ti:{port} 2>/dev/null | xargs -r kill 2>/dev/null || true); nohup /bin/sh -lc {shlex.quote(dev_command)} > /tmp/arevei-dev.log 2>&1 &",
@@ -1113,6 +1202,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                     "status": "command_failed",
                     "output": (
                         f"Started `{dev_command}` on Daytona sandbox {sandbox_id}, but port {port} did not become ready within 120 seconds.\n\n"
+                        f"Dependency check:\n{dependency_output[-2000:] or '(none)'}\n\n"
                         f"Probe output:\n{probe_output or '(none)'}\n\n"
                         f"Dev server log:\n{log_tail or '(empty)'}"
                     ),
@@ -1125,7 +1215,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 preview_link = sandbox.get_preview_link(port)
             return {
                 "status": "preview_ready",
-                "output": f"Started `{dev_command}` on Daytona sandbox {sandbox_id}. Port {port} is responding.\n\nDev server log:\n{log_tail}",
+                "output": f"Started `{dev_command}` on Daytona sandbox {sandbox_id}. Port {port} is responding.\n\nDependency check:\n{dependency_output[-2000:] or '(none)'}\n\nDev server log:\n{log_tail}",
                 "preview_url": _preview_url_value(preview_link),
                 "preview_port": port,
             }

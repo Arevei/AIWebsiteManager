@@ -12,8 +12,6 @@ import Signup from "./pages/Signup";
 import Dashboard from "./pages/admin/Dashboard";
 import DeveloperPlatform from "./pages/admin/DeveloperPlatform";
 import Agent from "./pages/admin/Agent";
-import SEO from "./pages/admin/SEO";
-import Settings from "./pages/admin/Settings";
 
 import SuperAdmin from "./pages/super/SuperAdmin";
 import TenantSite from "./pages/site/TenantSite";
@@ -48,11 +46,11 @@ export default function App() {
               <Route path="/admin/talk" element={<Navigate to="/admin" replace />} />
               <Route path="/admin/content" element={<Navigate to="/admin" replace />} />
               <Route path="/admin/design" element={<Navigate to="/admin" replace />} />
-              <Route path="/admin/seo" element={<Protected><SEO /></Protected>} />
-              <Route path="/admin/versions" element={<Navigate to="/admin/settings" replace />} />
-              <Route path="/admin/team" element={<Navigate to="/admin/settings" replace />} />
-              <Route path="/admin/billing" element={<Navigate to="/admin/settings" replace />} />
-              <Route path="/admin/settings" element={<Protected><Settings /></Protected>} />
+              <Route path="/admin/seo" element={<Navigate to="/admin?view=growth" replace />} />
+              <Route path="/admin/versions" element={<Navigate to="/admin?view=settings" replace />} />
+              <Route path="/admin/team" element={<Navigate to="/admin?view=settings" replace />} />
+              <Route path="/admin/billing" element={<Navigate to="/admin?view=settings" replace />} />
+              <Route path="/admin/settings" element={<Navigate to="/admin?view=settings" replace />} />
 
               <Route path="/super" element={<Protected role="super_admin"><SuperAdmin /></Protected>} />
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import requests
 from datetime import datetime, timezone
 from typing import Any
 
@@ -15,6 +16,8 @@ except ImportError:
     UserMessage = None
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 
 
 def _strip_fences(text: str) -> str:
@@ -24,7 +27,146 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
+def _response_output_text(data: dict[str, Any]) -> str:
+    if data.get("output_text"):
+        return data["output_text"]
+    chunks: list[str] = []
+    for item in data.get("output", []):
+        for part in item.get("content", []):
+            if part.get("type") in {"output_text", "text"} and part.get("text"):
+                chunks.append(part["text"])
+    return "\n".join(chunks)
+
+
+def _extract_json_object(text: str) -> dict:
+    cleaned = _strip_fences(text if isinstance(text, str) else str(text))
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{[\s\S]*\}", cleaned)
+        if not match:
+            return {}
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            return {}
+
+
+def _normalize_roadmap(data: Any, business_context: dict | None = None) -> dict:
+    if isinstance(data, list):
+        data = {"quarters": data}
+    if not isinstance(data, dict):
+        return {}
+
+    quarters = (
+        data.get("quarters")
+        or data.get("roadmap")
+        or data.get("year_roadmap")
+        or data.get("growth_roadmap")
+        or []
+    )
+    if isinstance(quarters, dict):
+        quarters = quarters.get("quarters") or quarters.get("items") or list(quarters.values())
+    if not isinstance(quarters, list):
+        quarters = []
+
+    normalized = []
+    for index, item in enumerate(quarters[:4], start=1):
+        if not isinstance(item, dict):
+            continue
+        milestones = item.get("milestones") or item.get("goals") or item.get("actions") or item.get("tasks") or []
+        if isinstance(milestones, str):
+            milestones = [milestones]
+        milestones = [str(m).strip() for m in milestones if str(m).strip()][:5]
+        if len(milestones) < 3:
+            continue
+        normalized.append({
+            "quarter": str(item.get("quarter") or item.get("label") or f"Q{index}").strip(),
+            "theme": str(item.get("theme") or item.get("focus") or item.get("title") or f"Growth phase {index}").strip(),
+            "milestones": milestones,
+        })
+
+    if len(normalized) >= 4:
+        return {"quarters": normalized[:4]}
+    return _fallback_roadmap(business_context or {})
+
+
+def _fallback_roadmap(business_context: dict) -> dict:
+    goals = str(business_context.get("goals") or "increase qualified leads, improve SEO visibility, and publish useful content")
+    audience = str(business_context.get("target_audience") or "target buyers")
+    return {
+        "quarters": [
+            {
+                "quarter": "Q1",
+                "theme": "Foundation and conversion clarity",
+                "milestones": [
+                    "Audit current website structure, messaging, and conversion paths.",
+                    f"Rewrite core pages for {audience} with clear calls to action.",
+                    "Set baseline SEO metadata, schema, speed, and analytics tracking.",
+                ],
+            },
+            {
+                "quarter": "Q2",
+                "theme": "Search visibility and content engine",
+                "milestones": [
+                    "Build a keyword-backed publishing plan around priority services.",
+                    "Publish helpful articles and answer-style pages for AI search discovery.",
+                    "Add internal links and FAQs that support the main conversion pages.",
+                ],
+            },
+            {
+                "quarter": "Q3",
+                "theme": "Lead generation and trust expansion",
+                "milestones": [
+                    "Improve forms, CTAs, proof sections, and landing page flows.",
+                    "Create case-study or portfolio content that supports buyer confidence.",
+                    "Use performance data to refine high-intent pages and offers.",
+                ],
+            },
+            {
+                "quarter": "Q4",
+                "theme": "Optimization and compounding growth",
+                "milestones": [
+                    f"Prioritize experiments aligned to: {goals}.",
+                    "Refresh top pages using analytics, search data, and conversion signals.",
+                    "Create the next annual roadmap from results, gaps, and new opportunities.",
+                ],
+            },
+        ],
+        "fallback": True,
+    }
+
+
+async def _ask_openai_json(session_id: str, system: str, user: str) -> dict:
+    if not OPENAI_API_KEY:
+        return {}
+    try:
+        res = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": OPENAI_MODEL,
+                "input": [
+                    {"role": "developer", "content": system + "\n\nReturn only valid JSON. Do not use markdown fences."},
+                    {"role": "user", "content": user},
+                ],
+            },
+            timeout=60,
+        )
+        if res.status_code >= 400:
+            return {}
+        return _extract_json_object(_response_output_text(res.json()))
+    except Exception:
+        return {}
+
+
 async def _ask_json(session_id: str, system: str, user: str) -> dict:
+    openai_data = await _ask_openai_json(session_id, system, user)
+    if openai_data:
+        return openai_data
     if not EMERGENT_LLM_KEY:
         return {}
     if LlmChat is None or UserMessage is None:

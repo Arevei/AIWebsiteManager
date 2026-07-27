@@ -7,8 +7,8 @@ const TOP_NAV = [
   { to: "/admin", label: "Dashboard" },
   { to: "/admin/dev", label: "AI Workspace" },
   { to: "/admin/agent", label: "Agent" },
-  { to: "/admin/seo", label: "Growth" },
-  { to: "/admin/settings", label: "Settings" },
+  { to: "/admin?view=growth", label: "Growth" },
+  { to: "/admin?view=settings", label: "Settings" },
 ];
 
 export default function AdminShell({ children, title, subtitle, actions }) {
@@ -23,7 +23,7 @@ export default function AdminShell({ children, title, subtitle, actions }) {
           </Link>
           <nav className="flex max-w-[calc(100vw-220px)] items-center gap-1 overflow-x-auto text-[12px] font-medium">
             {TOP_NAV.map((n) => {
-              const active = loc.pathname === n.to || (n.to !== "/admin" && loc.pathname.startsWith(n.to));
+              const active = `${loc.pathname}${loc.search}` === n.to || (n.to === "/admin" && loc.pathname === "/admin" && !loc.search) || (n.to !== "/admin" && loc.pathname.startsWith(n.to));
               return (
                 <Link
                   key={n.to}

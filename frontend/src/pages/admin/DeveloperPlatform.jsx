@@ -43,8 +43,8 @@ const ADMIN_NAV = [
   { to: "/admin", label: "Dashboard", icon: GridFour },
   { to: "/admin/dev", label: "AI Workspace", icon: Code },
   { to: "/admin/agent", label: "Agent", icon: Terminal },
-  { to: "/admin/seo", label: "Growth", icon: GridFour },
-  { to: "/admin/settings", label: "Settings", icon: GridFour },
+  { to: "/admin?view=growth", label: "Growth", icon: GridFour },
+  { to: "/admin?view=settings", label: "Settings", icon: GridFour },
 ];
 
 function encodePath(path) {
@@ -986,12 +986,10 @@ export default function DeveloperPlatform() {
       setRuntimeLogs(res.data.logs || []);
       if (res.data.status !== "preview_ready") {
         await refreshWorkspace(workspace.id);
-        setRightView("logs");
       }
     } catch (err) {
       toast.error(err.response?.data?.detail || "Could not start preview");
       await refreshWorkspace(workspace.id);
-      setRightView("logs");
     } finally {
       setAgentStatus("");
       setPreviewLoading(false);
@@ -1196,7 +1194,7 @@ export default function DeveloperPlatform() {
                     to={to}
                     className={cx(
                       "flex h-7 shrink-0 items-center gap-1.5 rounded px-2 text-[11px]",
-                      (location.pathname === to || (to !== "/admin" && location.pathname.startsWith(to))) ? p.active : `${p.muted} ${p.hover}`
+                      (`${location.pathname}${location.search}` === to || (to === "/admin" && location.pathname === "/admin" && !location.search) || (to !== "/admin" && location.pathname.startsWith(to))) ? p.active : `${p.muted} ${p.hover}`
                     )}
                   >
                     <Icon size={13} />
@@ -1251,7 +1249,7 @@ export default function DeveloperPlatform() {
                 to={to}
                 className={cx(
                   "flex h-6 shrink-0 items-center gap-1.5 rounded px-2 text-[11px]",
-                  (location.pathname === to || (to !== "/admin" && location.pathname.startsWith(to))) ? p.active : `${p.muted} ${p.hover}`
+                  (`${location.pathname}${location.search}` === to || (to === "/admin" && location.pathname === "/admin" && !location.search) || (to !== "/admin" && location.pathname.startsWith(to))) ? p.active : `${p.muted} ${p.hover}`
                 )}
               >
                 <Icon size={13} />
@@ -1406,17 +1404,15 @@ export default function DeveloperPlatform() {
                     </div>
                   ) : runtime && ["preview_ready", "command_succeeded", "ready", "bridge_error"].includes(runtime.status) ? (
                     <div className="flex h-full items-center justify-center p-6">
-                      <div className={cx("w-full max-w-xl rounded-lg border p-5", p.panel)}>
-                        <div className="mb-2 text-lg font-semibold">Runtime preview is not available yet</div>
+                      <div className={cx("w-full max-w-md rounded-lg border p-5 text-center", p.panel)}>
+                        <SpinnerGap size={28} className="mx-auto mb-3 animate-spin text-[#0d9f7c]" />
+                        <div className="mb-2 text-lg font-semibold">Preparing live preview</div>
                         <div className={cx("text-sm leading-6", p.muted)}>
-                          Status: <span className="font-mono">{runtime.status}</span>
-                          {runtime.preview_port ? ` on port ${runtime.preview_port}` : ""}.
+                          Arevei is waking the sandbox, installing dependencies when needed, and starting the dev server.
                         </div>
-                        <div className={cx("mt-4 max-h-44 overflow-auto rounded-md p-3 font-mono text-xs", p.codeBg)}>
-                          {runtimeLogs.length === 0
-                            ? "Run Install, then Run dev. If Daytona returns an auth callback page, regenerate the signed preview URL by running dev again."
-                            : runtimeLogs.slice(-8).map((log) => <div key={log.id} className="mb-2"><span className="text-[#0d9f7c]">{log.level}</span> {log.message}</div>)}
-                        </div>
+                        <button onClick={ensurePreview} className={cx("mt-5 rounded-md px-4 py-2 text-sm font-semibold", p.button)}>
+                          Retry preview
+                        </button>
                       </div>
                     </div>
                   ) : preview?.html ? (
