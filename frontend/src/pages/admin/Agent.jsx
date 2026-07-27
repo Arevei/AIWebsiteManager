@@ -1,27 +1,77 @@
 import React, { useEffect, useState } from "react";
-import AdminShell from "../../components/AdminShell";
-import { api } from "../../lib/api";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { CheckCircle, XCircle, Plug, PlayCircle, Sparkle, FileText, Bell } from "@phosphor-icons/react";
+import { api } from "../../lib/api";
+import {
+  ArrowRight,
+  Bell,
+  Brain,
+  CheckCircle,
+  FileText,
+  GearSix,
+  GitBranch,
+  Lightning,
+  ListChecks,
+  PlayCircle,
+  Plug,
+  RocketLaunch,
+  Sparkle,
+  XCircle,
+} from "@phosphor-icons/react";
+
+const LOGO = "/arevei-logo.png";
 
 const TABS = [
-  { id: "roadmap", label: "Roadmap" },
-  { id: "goals", label: "Goals & Tasks" },
-  { id: "execution", label: "Daily Cycle" },
-  { id: "integrations", label: "Integrations" },
-  { id: "reports", label: "Reports" },
-  { id: "notifications", label: "Activity" },
+  { id: "roadmap", label: "Roadmap", icon: GitBranch },
+  { id: "goals", label: "Goals", icon: ListChecks },
+  { id: "execution", label: "Daily Cycle", icon: PlayCircle },
+  { id: "integrations", label: "Integrations", icon: Plug },
+  { id: "reports", label: "Reports", icon: FileText },
+  { id: "notifications", label: "Activity", icon: Bell },
 ];
 
 const REQUIRED_INTEGRATIONS = {
-  gsc: "Google Search Console", ga4: "Google Analytics 4",
-  bing: "Bing Webmaster", schema: "Schema Validator",
-  geo: "AI Citation Tracking", slack: "Slack",
+  gsc: "Google Search Console",
+  ga4: "Google Analytics 4",
+  bing: "Bing Webmaster",
+  schema: "Schema Validator",
+  geo: "AI Citation Tracking",
+  slack: "Slack",
 };
+
+function Field({ label, value, onChange, rows = 2 }) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-xs uppercase tracking-[.16em] text-white/42">{label}</span>
+      <textarea
+        rows={rows}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full resize-none rounded-xl border border-white/10 bg-white/[.035] p-3 text-sm leading-6 text-white outline-none transition focus:border-[#49e8ca88]"
+      />
+    </label>
+  );
+}
+
+function EmptyState({ title, body }) {
+  return (
+    <div className="aw-glass-card grid min-h-[260px] place-items-center rounded-2xl p-8 text-center">
+      <div>
+        <div className="aw-bot-orbit aw-bot-orbit-small mx-auto mb-6">
+          <div className="grid h-20 w-24 place-items-center rounded-[24px] border-[8px] border-[#49e8ca88] bg-[#081014] text-[#49e8ca]">
+            <Sparkle size={30} />
+          </div>
+        </div>
+        <div className="text-xl font-bold">{title}</div>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-white/58">{body}</p>
+      </div>
+    </div>
+  );
+}
 
 export default function Agent() {
   const [tab, setTab] = useState("roadmap");
-  const [settings, setSettings] = useState({ auto_publish_low_risk: false, discovery_done: false });
+  const [settings, setSettings] = useState({ auto_publish_low_risk: false });
   const [roadmap, setRoadmap] = useState({ active: null, draft: null });
   const [goals, setGoals] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -30,304 +80,324 @@ export default function Agent() {
   const [reports, setReports] = useState([]);
   const [notifs, setNotifs] = useState([]);
   const [discovery, setDiscovery] = useState({
-    business_description: "", target_audience: "", goals: "",
-    competitors: "", brand_voice: "", strategy_doc: "",
+    business_description: "DemoBiz helps growing businesses launch modern websites and measurable digital growth systems.",
+    target_audience: "Founders, local service businesses, and operators who want growth without managing multiple vendors.",
+    goals: "Increase qualified leads, improve SEO visibility, publish useful content, and improve website speed.",
+    competitors: "Local agencies, website builders, and SEO consultants.",
+    brand_voice: "Clear, premium, direct, helpful, and conversion-focused.",
+    strategy_doc: "",
   });
   const [loading, setLoading] = useState(false);
 
   const loadAll = async () => {
     const [s, rm, g, t, a, i, rp, n] = await Promise.all([
-      api.get("/agent/settings"), api.get("/agent/roadmap"),
-      api.get("/agent/goals"), api.get("/agent/tasks"),
-      api.get("/agent/actions"), api.get("/agent/integrations"),
-      api.get("/agent/reports"), api.get("/agent/notifications"),
+      api.get("/agent/settings"),
+      api.get("/agent/roadmap"),
+      api.get("/agent/goals"),
+      api.get("/agent/tasks"),
+      api.get("/agent/actions"),
+      api.get("/agent/integrations"),
+      api.get("/agent/reports"),
+      api.get("/agent/notifications"),
     ]);
-    setSettings(s.data); setRoadmap(rm.data); setGoals(g.data);
-    setTasks(t.data); setActions(a.data); setIntegrations(i.data);
-    setReports(rp.data); setNotifs(n.data);
+    setSettings(s.data);
+    setRoadmap(rm.data);
+    setGoals(g.data);
+    setTasks(t.data);
+    setActions(a.data);
+    setIntegrations(i.data);
+    setReports(rp.data);
+    setNotifs(n.data);
   };
+
   useEffect(() => { loadAll(); }, []);
 
   const runDiscovery = async () => {
     setLoading(true);
-    try { await api.post("/agent/discovery", discovery); toast.success("Roadmap drafted"); loadAll(); }
-    catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
-    finally { setLoading(false); }
+    try {
+      await api.post("/agent/discovery", discovery);
+      toast.success("Roadmap drafted");
+      loadAll();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to draft roadmap");
+    } finally {
+      setLoading(false);
+    }
   };
+
   const activate = async (rid) => {
     await api.post(`/agent/roadmap/${rid}/activate`);
     toast.success("Roadmap activated");
     loadAll();
-    // Ask if the founder wants the agent to draft the first blog
-    setTimeout(() => {
-      if (window.confirm("Roadmap saved. Want me to draft your first blog post based on this strategy? You'll review and approve it before it publishes.")) {
-        proposeBlog();
-      }
-    }, 300);
   };
+
   const proposeBlog = async () => {
     setLoading(true);
     try {
       await api.post("/agent/blog/propose", {});
-      toast.success("Blog drafted — see 'Daily Cycle' tab to review");
+      toast.success("Blog draft ready for review");
       setTab("execution");
       loadAll();
-    } catch (e) { toast.error(e.response?.data?.detail || "Failed to draft blog"); }
-    finally { setLoading(false); }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to draft blog");
+    } finally {
+      setLoading(false);
+    }
   };
-  const genGoals = async () => { setLoading(true); try { await api.post("/agent/goals/generate"); toast.success("Goals generated"); loadAll(); } catch { toast.error("Failed"); } finally { setLoading(false); } };
-  const genTasks = async (gid) => { setLoading(true); try { await api.post(`/agent/goals/${gid}/tasks/generate`); toast.success("Tasks generated"); loadAll(); } catch { toast.error("Failed"); } finally { setLoading(false); } };
-  const runCycle = async () => { setLoading(true); try { const r = await api.post("/agent/cycle/run"); toast.success(`Executed ${r.data.executed} tasks`); loadAll(); } catch { toast.error("Cycle failed"); } finally { setLoading(false); } };
-  const applyAction = async (aid, accept) => { await api.post(`/agent/actions/${aid}/apply`, { accept }); toast.success(accept ? "Published" : "Rejected"); loadAll(); };
-  const toggleInt = async (i) => { if (i.status === "connected") { await api.post(`/agent/integrations/${i.type}/disconnect`); } else { await api.post(`/agent/integrations/${i.type}/connect`); } loadAll(); };
-  const genReport = async () => { setLoading(true); try { await api.post("/agent/reports/generate"); toast.success("Report generated"); loadAll(); } catch { toast.error("Failed"); } finally { setLoading(false); } };
-  const toggleAutoPub = async () => { const v = !settings.auto_publish_low_risk; await api.patch("/agent/settings", { auto_publish_low_risk: v }); setSettings({ ...settings, auto_publish_low_risk: v }); };
+
+  const genGoals = async () => {
+    setLoading(true);
+    try {
+      await api.post("/agent/goals/generate");
+      toast.success("Goals generated");
+      loadAll();
+    } catch {
+      toast.error("Failed to generate goals");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const genTasks = async (gid) => {
+    setLoading(true);
+    try {
+      await api.post(`/agent/goals/${gid}/tasks/generate`);
+      toast.success("Tasks generated");
+      loadAll();
+    } catch {
+      toast.error("Failed to generate tasks");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runCycle = async () => {
+    setLoading(true);
+    try {
+      const res = await api.post("/agent/cycle/run");
+      toast.success(`Executed ${res.data.executed} tasks`);
+      loadAll();
+    } catch {
+      toast.error("Cycle failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const applyAction = async (aid, accept) => {
+    await api.post(`/agent/actions/${aid}/apply`, { accept });
+    toast.success(accept ? "Published" : "Rejected");
+    loadAll();
+  };
+
+  const toggleInt = async (item) => {
+    if (item.status === "connected") await api.post(`/agent/integrations/${item.type}/disconnect`);
+    else await api.post(`/agent/integrations/${item.type}/connect`);
+    loadAll();
+  };
+
+  const genReport = async () => {
+    setLoading(true);
+    try {
+      await api.post("/agent/reports/generate");
+      toast.success("Report generated");
+      loadAll();
+    } catch {
+      toast.error("Failed to generate report");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleAutoPub = async () => {
+    const next = !settings.auto_publish_low_risk;
+    await api.patch("/agent/settings", { auto_publish_low_risk: next });
+    setSettings({ ...settings, auto_publish_low_risk: next });
+  };
+
   const resetAgent = async () => {
-    if (!window.confirm("Wipe all roadmaps, goals, tasks, actions and reports for this tenant? Your website content stays intact.")) return;
+    if (!window.confirm("Clear roadmaps, goals, tasks, actions and reports for this tenant? Your website content stays intact.")) return;
     await api.post("/agent/reset");
     toast.success("Agent state cleared");
     loadAll();
   };
 
-  const tasksByGoal = tasks.reduce((acc, t) => { (acc[t.goal_id] = acc[t.goal_id] || []).push(t); return acc; }, {});
-  const connectedCount = integrations.filter((i) => i.status === "connected").length;
+  const tasksByGoal = tasks.reduce((acc, item) => {
+    (acc[item.goal_id] = acc[item.goal_id] || []).push(item);
+    return acc;
+  }, {});
+  const connectedCount = integrations.filter((item) => item.status === "connected").length;
+  const activeRoadmap = roadmap.active || roadmap.draft;
 
   return (
-    <AdminShell
-      title="AI Website Manager"
-      subtitle="Strategy · Goals · Execution · Reports"
-      actions={
-        <div className="flex items-center gap-3">
-          <button onClick={resetAgent} data-testid="reset-agent" className="border border-[color:var(--ar-line)] px-3 py-2 font-mono text-xs uppercase tracking-wider hover:bg-[color:var(--ar-surface)]">Reset agent</button>
-          <label className="font-mono text-xs uppercase tracking-wider flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={settings.auto_publish_low_risk} onChange={toggleAutoPub} data-testid="toggle-autopub" />
-            Auto-publish low-risk
-          </label>
-        </div>
-      }
-    >
-      <div className="flex flex-wrap gap-1 border-b border-[color:var(--ar-line)] mb-6">
-        {TABS.map((tb) => (
-          <button key={tb.id} onClick={() => setTab(tb.id)} data-testid={`tab-${tb.id}`}
-            className={`px-4 py-2 font-mono text-xs uppercase tracking-wider border-b-2 ${tab === tb.id ? "border-[color:var(--ar-ink)] text-[color:var(--ar-ink)]" : "border-transparent text-[color:var(--ar-ink-2)]"}`}>
-            {tb.label}
-          </button>
-        ))}
-      </div>
-
-      {/* ROADMAP */}
-      {tab === "roadmap" && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="ar-card p-5" data-testid="discovery-panel">
-            <div className="eyebrow mb-3">Discovery</div>
-            <h3 className="font-display text-2xl font-bold tracking-tighter mb-4">Tell the agent about your business</h3>
-            {["business_description", "target_audience", "goals", "competitors", "brand_voice"].map((f) => (
-              <label key={f} className="block mb-3">
-                <span className="eyebrow text-[10px] block mb-1">{f.replace(/_/g, " ")}</span>
-                <textarea rows={2} value={discovery[f]} onChange={(e) => setDiscovery({ ...discovery, [f]: e.target.value })} data-testid={`disc-${f}`} className="w-full border border-[color:var(--ar-line)] focus:border-[color:var(--ar-ink)] focus:outline-none p-2 font-mono text-xs" />
-              </label>
-            ))}
-            <label className="block mb-3">
-              <span className="eyebrow text-[10px] block mb-1">Or paste your own strategy doc (optional)</span>
-              <textarea rows={3} value={discovery.strategy_doc} onChange={(e) => setDiscovery({ ...discovery, strategy_doc: e.target.value })} data-testid="disc-doc" className="w-full border border-[color:var(--ar-line)] focus:border-[color:var(--ar-ink)] focus:outline-none p-2 font-mono text-xs" />
-            </label>
-            <button onClick={runDiscovery} disabled={loading} data-testid="run-discovery" className="bg-[color:var(--ar-ink)] text-white px-4 py-2 font-mono text-xs uppercase tracking-wider hover:bg-black disabled:opacity-60">
-              {loading ? "Drafting…" : "Generate Roadmap"}
+    <div className="aw-shell min-h-screen bg-[#030607] text-white">
+      <div className="aw-bg-grid" />
+      <div className="aw-glow aw-glow-a" />
+      <div className="relative z-10">
+        <header className="flex h-[76px] items-center justify-between border-b border-white/10 px-8">
+          <Link to="/admin"><img src={LOGO} alt="Arevei" className="h-10 w-auto" /></Link>
+          <div className="hidden items-center gap-5 md:flex">
+            <span className="flex items-center gap-2 text-[#49e8ca]"><Sparkle /> AI Website Manager</span>
+            <span className="h-6 w-px bg-white/15" />
+            <span className="text-white/60">Preparing roadmap using AI</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button onClick={resetAgent} className="rounded-xl border border-white/12 px-4 py-2 text-sm text-white/72 hover:border-white/30">Reset</button>
+            <button onClick={toggleAutoPub} className={`rounded-xl border px-4 py-2 text-sm ${settings.auto_publish_low_risk ? "border-[#49e8ca88] text-[#49e8ca]" : "border-white/12 text-white/72"}`}>
+              Auto publish {settings.auto_publish_low_risk ? "on" : "off"}
             </button>
           </div>
+        </header>
 
-          <div className="ar-card p-5">
-            <div className="eyebrow mb-3">Current roadmap</div>
-            {!roadmap.active && !roadmap.draft && (
-              <div className="font-mono text-sm text-[color:var(--ar-ink-3)] py-6">No roadmap yet. Run discovery →</div>
-            )}
-            {(roadmap.active || roadmap.draft) && (
-              <div>
-                {(() => {
-                  const r = roadmap.active || roadmap.draft;
-                  return (
-                    <>
-                      <div className="flex items-center justify-between mb-4">
-                        <div>
-                          <div className="font-display text-2xl font-bold tracking-tighter">12-month roadmap</div>
-                          <div className="font-mono text-xs uppercase text-[color:var(--ar-ink-3)]">{r.source} · {r.status}</div>
-                        </div>
-                        {r.status === "draft" && (
-                          <button onClick={() => activate(r.id)} data-testid="activate-roadmap" className="bg-[color:var(--ar-ink)] text-white px-3 py-2 font-mono text-xs uppercase tracking-wider">Activate</button>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {(r.content?.quarters || []).map((q, i) => (
-                          <div key={i} className="ar-card-soft p-4">
-                            <div className="font-mono text-xs uppercase text-[color:var(--ar-ai)]">{q.quarter}</div>
-                            <div className="font-display text-lg font-bold tracking-tighter">{q.theme}</div>
-                            <ul className="mt-2 space-y-1 text-sm text-[color:var(--ar-ink-2)]">
-                              {(q.milestones || []).map((m, j) => <li key={j}>› {m}</li>)}
-                            </ul>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* GOALS & TASKS */}
-      {tab === "goals" && (
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <div className="eyebrow">Active goals · this month</div>
-            <button onClick={genGoals} disabled={loading} data-testid="gen-goals" className="bg-[color:var(--ar-ink)] text-white px-3 py-2 font-mono text-xs uppercase tracking-wider disabled:opacity-60"><Sparkle size={12} className="inline mr-1" /> Generate this month's goals</button>
-          </div>
-          {goals.length === 0 ? <div className="ar-card p-6 text-center font-mono text-sm text-[color:var(--ar-ink-3)]">No goals yet. Activate a roadmap, then generate.</div> :
-            <div className="space-y-4">
-              {goals.map((g) => (
-                <div key={g.id} className="ar-card p-5" data-testid={`goal-${g.id}`}>
-                  <div className="flex justify-between items-start gap-4 mb-3">
-                    <div>
-                      <div className="font-mono text-[10px] uppercase tracking-wider text-[color:var(--ar-ai)]">{g.month} · {g.category}</div>
-                      <div className="font-display text-xl font-bold tracking-tighter">{g.goal_text}</div>
-                      <div className="text-sm text-[color:var(--ar-ink-2)] mt-1">{g.why}</div>
-                    </div>
-                    <button onClick={() => genTasks(g.id)} data-testid={`gen-tasks-${g.id}`} className="border border-[color:var(--ar-ink)] px-3 py-1.5 font-mono text-xs uppercase tracking-wider hover:bg-[color:var(--ar-surface)] whitespace-nowrap">Break into tasks</button>
-                  </div>
-                  {(tasksByGoal[g.id] || []).length > 0 && (
-                    <ul className="mt-3 divide-y divide-[color:var(--ar-line)] border-t border-[color:var(--ar-line)]">
-                      {tasksByGoal[g.id].map((t) => (
-                        <li key={t.id} className="py-2 flex items-center justify-between text-sm" data-testid={`task-${t.id}`}>
-                          <span>› {t.description}</span>
-                          <span className="font-mono text-[10px] uppercase text-[color:var(--ar-ink-3)]">{t.priority} · {t.effort} · {t.status}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              ))}
-            </div>
-          }
-        </div>
-      )}
-
-      {/* EXECUTION */}
-      {tab === "execution" && (
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <div className="eyebrow">Daily cycle</div>
-            <button onClick={runCycle} disabled={loading} data-testid="run-cycle" className="bg-[color:var(--ar-ai)] text-white px-4 py-2 font-mono text-xs uppercase tracking-wider hover:bg-red-600 disabled:opacity-60"><PlayCircle size={14} weight="fill" className="inline mr-1" /> Run cycle now</button>
-          </div>
-          {actions.length === 0 ? <div className="ar-card p-6 text-center font-mono text-sm text-[color:var(--ar-ink-3)]">Nothing executed yet. Generate tasks then run the cycle.</div> :
-            <div className="space-y-3">
-              {actions.map((a) => (
-                <div key={a.id} className="ar-card p-4" data-testid={`action-${a.id}`}>
-                  <div className="flex justify-between items-start gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="font-mono text-[10px] uppercase text-[color:var(--ar-ink-3)]">{a.status} · {a.tool_used || "manual"} · {(a.diff?.changes || []).length} changes</div>
-                      <div className="text-sm">{a.input}</div>
-                      <div className="font-mono text-xs text-[color:var(--ar-ink-2)] mt-1">{a.output}</div>
-                    </div>
-                    {a.status === "proposed" && (
-                      <div className="flex gap-2">
-                        <button onClick={() => applyAction(a.id, false)} data-testid={`reject-${a.id}`} className="border border-[color:var(--ar-line)] px-2 py-1 font-mono text-[10px] uppercase"><XCircle size={12} className="inline" /> Reject</button>
-                        <button onClick={() => applyAction(a.id, true)} data-testid={`publish-${a.id}`} className="bg-[color:var(--ar-ink)] text-white px-2 py-1 font-mono text-[10px] uppercase"><CheckCircle size={12} className="inline" /> Publish</button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          }
-        </div>
-      )}
-
-      {/* INTEGRATIONS */}
-      {tab === "integrations" && (
-        <div>
-          <div className="ar-card p-4 mb-4 flex items-center justify-between" data-testid="integrations-status">
-            <div>
-              <div className="eyebrow">Connections</div>
-              <div className="font-display text-3xl font-black tracking-tighter">{connectedCount} <span className="text-[color:var(--ar-ink-3)] text-base font-mono">/ {Object.keys(REQUIRED_INTEGRATIONS).length} connected</span></div>
-            </div>
-            <Plug size={32} className="text-[color:var(--ar-ink-3)]" />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {integrations.map((i) => (
-              <div key={i.type} className="ar-card p-4 flex items-center justify-between" data-testid={`int-${i.type}`}>
-                <div>
-                  <div className="font-display font-bold tracking-tighter">{REQUIRED_INTEGRATIONS[i.type] || i.type}</div>
-                  <div className="font-mono text-[10px] uppercase text-[color:var(--ar-ink-3)]">{i.status}</div>
-                </div>
-                <button onClick={() => toggleInt(i)} data-testid={`int-toggle-${i.type}`} className={`px-3 py-2 font-mono text-xs uppercase tracking-wider ${i.status === "connected" ? "border border-[color:var(--ar-line)]" : "bg-[color:var(--ar-ink)] text-white"}`}>
-                  {i.status === "connected" ? "Disconnect" : "Connect"}
+        <main className="mx-auto max-w-[1450px] px-8 py-8">
+          <section className="mb-8 grid gap-6 lg:grid-cols-[1.15fr_.85fr]">
+            <div className="aw-glass-card rounded-3xl p-8">
+              <div className="mb-4 inline-flex rounded-xl border border-[#49e8ca55] bg-[#07211d] px-4 py-2 text-sm text-[#49e8ca]">AI Roadmap Engine</div>
+              <h1 className="text-[46px] font-extrabold leading-tight tracking-[-.02em]">
+                Preparing roadmap for your <span className="text-[#49e8ca]">AI Website Manager</span>
+              </h1>
+              <p className="mt-4 max-w-2xl text-lg leading-8 text-white/62">
+                Arevei turns business context into goals, daily tasks, content actions, reports, and growth recommendations.
+              </p>
+              <div className="mt-7 flex flex-wrap gap-3">
+                <button onClick={runDiscovery} disabled={loading} className="inline-flex h-12 items-center gap-2 rounded-full bg-[#49e8ca] px-6 font-bold text-black disabled:opacity-60">
+                  <Sparkle /> {loading ? "Drafting..." : "Generate Roadmap"}
+                </button>
+                <button onClick={proposeBlog} disabled={loading} className="inline-flex h-12 items-center gap-2 rounded-full border border-white/14 px-6 font-bold text-white hover:border-[#49e8ca88]">
+                  <FileText /> Draft Blog
                 </button>
               </div>
+            </div>
+            <div className="aw-glass-card rounded-3xl p-8">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm uppercase tracking-[.16em] text-white/42">Autopilot Status</div>
+                  <div className="mt-2 text-2xl font-bold">{activeRoadmap ? "Roadmap online" : "Waiting for discovery"}</div>
+                </div>
+                <span className="aw-live-dot" />
+              </div>
+              <div className="mt-7 grid gap-3">
+                {["Business context", "Growth strategy", "Monthly goals", "Execution queue"].map((item, index) => (
+                  <div key={item} className="flex items-center gap-3 rounded-xl bg-white/[.035] px-4 py-3 text-sm">
+                    <CheckCircle className={index < 2 || activeRoadmap ? "text-[#49e8ca]" : "text-white/28"} weight="fill" />
+                    <span>{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <div className="mb-7 flex flex-wrap gap-2">
+            {TABS.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                className={`inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm ${tab === id ? "border-[#49e8ca88] bg-[#49e8ca12] text-[#49e8ca]" : "border-white/10 text-white/60 hover:text-white"}`}
+              >
+                <Icon size={17} /> {label}
+              </button>
             ))}
           </div>
-          <div className="mt-4 font-mono text-xs text-[color:var(--ar-ink-3)]">⚠️ Connections are MOCKED — real OAuth flow plugs in when you provide credentials.</div>
-        </div>
-      )}
 
-      {/* REPORTS */}
-      {tab === "reports" && (
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <div className="eyebrow">Monthly reports</div>
-            <button onClick={genReport} disabled={loading} data-testid="gen-report" className="bg-[color:var(--ar-ink)] text-white px-4 py-2 font-mono text-xs uppercase tracking-wider disabled:opacity-60"><FileText size={14} className="inline mr-1" /> Generate this month's report</button>
-          </div>
-          {reports.length === 0 ? <div className="ar-card p-6 text-center font-mono text-sm text-[color:var(--ar-ink-3)]">No reports yet.</div> :
-            <div className="space-y-4">
-              {reports.map((r) => (
-                <div key={r.id} className="ar-card p-5" data-testid={`report-${r.id}`}>
-                  <div className="font-mono text-xs uppercase text-[color:var(--ar-ink-3)]">{r.month}</div>
-                  <div className="font-display text-xl font-bold tracking-tighter mb-2">{r.content?.summary}</div>
-                  {r.content?.metrics && (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 my-3">
-                      {Object.entries(r.content.metrics).map(([k, v]) => (
-                        <div key={k} className="ar-card-soft p-2"><div className="eyebrow text-[10px]">{k}</div><div className="font-display font-bold">{String(v)}</div></div>
-                      ))}
-                    </div>
-                  )}
-                  {r.content?.wins?.length > 0 && (
-                    <>
-                      <div className="eyebrow mt-3 mb-1">Wins</div>
-                      <ul className="text-sm space-y-1">{r.content.wins.map((w, i) => <li key={i}>✓ {w}</li>)}</ul>
-                    </>
-                  )}
-                  {r.content?.recommendations?.length > 0 && (
-                    <>
-                      <div className="eyebrow mt-3 mb-1">Next month</div>
-                      <ul className="text-sm space-y-1 text-[color:var(--ar-ink-2)]">{r.content.recommendations.map((w, i) => <li key={i}>→ {w}</li>)}</ul>
-                    </>
-                  )}
+          {tab === "roadmap" && (
+            <div className="grid gap-6 lg:grid-cols-[.9fr_1.1fr]">
+              <div className="aw-glass-card rounded-2xl p-6">
+                <h2 className="text-xl font-bold">Business Discovery</h2>
+                <div className="mt-5 space-y-4">
+                  <Field label="Business description" value={discovery.business_description} onChange={(value) => setDiscovery({ ...discovery, business_description: value })} />
+                  <Field label="Target audience" value={discovery.target_audience} onChange={(value) => setDiscovery({ ...discovery, target_audience: value })} />
+                  <Field label="Goals" value={discovery.goals} onChange={(value) => setDiscovery({ ...discovery, goals: value })} />
+                  <Field label="Competitors" value={discovery.competitors} onChange={(value) => setDiscovery({ ...discovery, competitors: value })} />
+                  <Field label="Brand voice" value={discovery.brand_voice} onChange={(value) => setDiscovery({ ...discovery, brand_voice: value })} />
                 </div>
-              ))}
-            </div>
-          }
-        </div>
-      )}
-
-      {/* NOTIFICATIONS */}
-      {tab === "notifications" && (
-        <div>
-          <div className="eyebrow mb-3 flex items-center gap-2"><Bell size={14} /> Agent activity</div>
-          {notifs.length === 0 ? <div className="ar-card p-6 text-center font-mono text-sm text-[color:var(--ar-ink-3)]">No activity yet.</div> :
-            <div className="ar-card divide-y divide-[color:var(--ar-line)]">
-              {notifs.map((n) => (
-                <div key={n.id} className="p-4 flex items-start justify-between" data-testid={`notif-${n.id}`}>
-                  <div>
-                    <div className="font-mono text-[10px] uppercase text-[color:var(--ar-ink-3)]">{n.type} · {new Date(n.sent_at).toLocaleString()}</div>
-                    <div>{n.message}</div>
+              </div>
+              <div className="aw-glass-card rounded-2xl p-6">
+                <div className="mb-5 flex items-center justify-between">
+                  <h2 className="text-xl font-bold">Roadmap Preview</h2>
+                  {activeRoadmap?.status === "draft" && <button onClick={() => activate(activeRoadmap.id)} className="rounded-xl bg-[#49e8ca] px-4 py-2 text-sm font-bold text-black">Activate</button>}
+                </div>
+                {!activeRoadmap ? (
+                  <EmptyState title="No roadmap yet" body="Generate a roadmap from discovery context to prepare the AI Website Manager." />
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {(activeRoadmap.content?.quarters || []).map((quarter, index) => (
+                      <div key={index} className="rounded-2xl border border-white/10 bg-white/[.035] p-5">
+                        <div className="text-xs uppercase tracking-[.16em] text-[#49e8ca]">{quarter.quarter}</div>
+                        <div className="mt-2 text-lg font-bold">{quarter.theme}</div>
+                        <ul className="mt-3 space-y-2 text-sm leading-6 text-white/62">
+                          {(quarter.milestones || []).map((item) => <li key={item}>- {item}</li>)}
+                        </ul>
+                      </div>
+                    ))}
                   </div>
-                  {!n.read && <span className="w-2 h-2 bg-[color:var(--ar-ai)] mt-2" />}
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab === "goals" && (
+            <div>
+              <div className="mb-4 flex justify-end"><button onClick={genGoals} disabled={loading} className="rounded-xl bg-[#49e8ca] px-4 py-2 font-bold text-black disabled:opacity-60">Generate Goals</button></div>
+              {goals.length === 0 ? <EmptyState title="No goals yet" body="Activate a roadmap, then generate monthly goals and execution tasks." /> : (
+                <div className="grid gap-4">
+                  {goals.map((goal) => (
+                    <div key={goal.id} className="aw-glass-card rounded-2xl p-5">
+                      <div className="flex items-start justify-between gap-4">
+                        <div><div className="text-xs uppercase tracking-[.16em] text-[#49e8ca]">{goal.month} - {goal.category}</div><div className="mt-2 text-xl font-bold">{goal.goal_text}</div><div className="mt-2 text-sm text-white/55">{goal.why}</div></div>
+                        <button onClick={() => genTasks(goal.id)} className="rounded-xl border border-white/12 px-4 py-2 text-sm hover:border-[#49e8ca88]">Break into tasks</button>
+                      </div>
+                      {(tasksByGoal[goal.id] || []).length > 0 && <div className="mt-4 grid gap-2">{tasksByGoal[goal.id].map((task) => <div key={task.id} className="flex items-center justify-between rounded-xl bg-white/[.035] px-4 py-3 text-sm"><span>{task.description}</span><span className="text-xs uppercase text-white/42">{task.priority} - {task.status}</span></div>)}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === "execution" && (
+            <div>
+              <div className="mb-4 flex justify-end"><button onClick={runCycle} disabled={loading} className="rounded-xl bg-[#49e8ca] px-4 py-2 font-bold text-black disabled:opacity-60"><Lightning className="mr-2 inline" />Run Cycle</button></div>
+              {actions.length === 0 ? <EmptyState title="Execution queue is empty" body="Generate tasks, then run the daily cycle to create reviewable actions." /> : actions.map((action) => (
+                <div key={action.id} className="aw-glass-card mb-3 rounded-2xl p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div><div className="text-xs uppercase tracking-[.16em] text-white/42">{action.status} - {action.tool_used || "manual"}</div><div className="mt-2">{action.input}</div><div className="mt-2 text-sm text-white/55">{action.output}</div></div>
+                    {action.status === "proposed" && <div className="flex gap-2"><button onClick={() => applyAction(action.id, false)} className="rounded-lg border border-white/12 px-3 py-2 text-sm"><XCircle className="inline" /> Reject</button><button onClick={() => applyAction(action.id, true)} className="rounded-lg bg-[#49e8ca] px-3 py-2 text-sm font-bold text-black"><CheckCircle className="inline" /> Publish</button></div>}
+                  </div>
                 </div>
               ))}
             </div>
-          }
-        </div>
-      )}
-    </AdminShell>
+          )}
+
+          {tab === "integrations" && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="aw-glass-card rounded-2xl p-6 md:col-span-2"><div className="text-3xl font-bold">{connectedCount} / {Object.keys(REQUIRED_INTEGRATIONS).length}</div><div className="mt-1 text-white/55">Connected growth integrations</div></div>
+              {integrations.map((item) => (
+                <div key={item.type} className="aw-glass-card flex items-center justify-between rounded-2xl p-5">
+                  <div><div className="font-bold">{REQUIRED_INTEGRATIONS[item.type] || item.type}</div><div className="text-sm uppercase text-white/42">{item.status}</div></div>
+                  <button onClick={() => toggleInt(item)} className="rounded-xl border border-white/12 px-4 py-2 text-sm hover:border-[#49e8ca88]">{item.status === "connected" ? "Disconnect" : "Connect"}</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {tab === "reports" && (
+            <div>
+              <div className="mb-4 flex justify-end"><button onClick={genReport} disabled={loading} className="rounded-xl bg-[#49e8ca] px-4 py-2 font-bold text-black disabled:opacity-60">Generate Report</button></div>
+              {reports.length === 0 ? <EmptyState title="No reports yet" body="Generate the monthly report once goals and actions are available." /> : reports.map((report) => (
+                <div key={report.id} className="aw-glass-card mb-4 rounded-2xl p-6"><div className="text-xs uppercase tracking-[.16em] text-white/42">{report.month}</div><div className="mt-2 text-xl font-bold">{report.content?.summary}</div></div>
+              ))}
+            </div>
+          )}
+
+          {tab === "notifications" && (
+            <div className="aw-glass-card divide-y divide-white/10 rounded-2xl">
+              {notifs.length === 0 ? <div className="p-8 text-center text-white/55">No activity yet.</div> : notifs.map((item) => (
+                <div key={item.id} className="flex items-center justify-between p-5"><div><div className="text-xs uppercase tracking-[.16em] text-white/42">{item.type}</div><div className="mt-1">{item.message}</div></div>{!item.read && <span className="aw-live-dot" />}</div>
+              ))}
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
   );
 }

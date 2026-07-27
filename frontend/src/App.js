@@ -12,14 +12,8 @@ import Signup from "./pages/Signup";
 import Dashboard from "./pages/admin/Dashboard";
 import DeveloperPlatform from "./pages/admin/DeveloperPlatform";
 import Agent from "./pages/admin/Agent";
-import AIStudio from "./pages/admin/AIStudio";
-import Talk from "./pages/admin/Talk";
-import ContentEditor from "./pages/admin/ContentEditor";
-import DesignSettings from "./pages/admin/DesignSettings";
 import SEO from "./pages/admin/SEO";
-import Versions from "./pages/admin/Versions";
-import Team from "./pages/admin/Team";
-import Billing from "./pages/admin/Billing";
+import Settings from "./pages/admin/Settings";
 
 import SuperAdmin from "./pages/super/SuperAdmin";
 import TenantSite from "./pages/site/TenantSite";
@@ -50,14 +44,15 @@ export default function App() {
               <Route path="/admin" element={<Protected><Dashboard /></Protected>} />
               <Route path="/admin/dev" element={<Protected><DeveloperPlatform /></Protected>} />
               <Route path="/admin/agent" element={<Protected><Agent /></Protected>} />
-              <Route path="/admin/ai" element={<Protected><AIStudio /></Protected>} />
-              <Route path="/admin/talk" element={<Protected><Talk /></Protected>} />
-              <Route path="/admin/content" element={<Protected><ContentEditor /></Protected>} />
-              <Route path="/admin/design" element={<Protected><DesignSettings /></Protected>} />
+              <Route path="/admin/ai" element={<Navigate to="/admin/dev" replace />} />
+              <Route path="/admin/talk" element={<Navigate to="/admin" replace />} />
+              <Route path="/admin/content" element={<Navigate to="/admin" replace />} />
+              <Route path="/admin/design" element={<Navigate to="/admin" replace />} />
               <Route path="/admin/seo" element={<Protected><SEO /></Protected>} />
-              <Route path="/admin/versions" element={<Protected><Versions /></Protected>} />
-              <Route path="/admin/team" element={<Protected><Team /></Protected>} />
-              <Route path="/admin/billing" element={<Protected><Billing /></Protected>} />
+              <Route path="/admin/versions" element={<Navigate to="/admin/settings" replace />} />
+              <Route path="/admin/team" element={<Navigate to="/admin/settings" replace />} />
+              <Route path="/admin/billing" element={<Navigate to="/admin/settings" replace />} />
+              <Route path="/admin/settings" element={<Protected><Settings /></Protected>} />
 
               <Route path="/super" element={<Protected role="super_admin"><SuperAdmin /></Protected>} />
 

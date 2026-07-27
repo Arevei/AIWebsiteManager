@@ -4,17 +4,11 @@ import { useAuth } from "../lib/auth";
 import { ThemeToggle } from "../lib/theme";
 
 const TOP_NAV = [
-  { to: "/admin", label: "Overview" },
-  { to: "/admin/dev", label: "Workspace" },
+  { to: "/admin", label: "Dashboard" },
+  { to: "/admin/dev", label: "AI Workspace" },
   { to: "/admin/agent", label: "Agent" },
-  { to: "/admin/ai", label: "AI Studio" },
-  { to: "/admin/talk", label: "Talk" },
-  { to: "/admin/content", label: "Content" },
-  { to: "/admin/design", label: "Design" },
-  { to: "/admin/seo", label: "SEO / AEO" },
-  { to: "/admin/versions", label: "History" },
-  { to: "/admin/team", label: "Team" },
-  { to: "/admin/billing", label: "Billing" },
+  { to: "/admin/seo", label: "Growth" },
+  { to: "/admin/settings", label: "Settings" },
 ];
 
 export default function AdminShell({ children, title, subtitle, actions }) {

@@ -40,17 +40,11 @@ import { useAuth } from "../../lib/auth";
 import { useTheme } from "../../lib/theme";
 
 const ADMIN_NAV = [
-  { to: "/admin", label: "Overview", icon: GridFour },
-  { to: "/admin/dev", label: "Workspace", icon: Code },
+  { to: "/admin", label: "Dashboard", icon: GridFour },
+  { to: "/admin/dev", label: "AI Workspace", icon: Code },
   { to: "/admin/agent", label: "Agent", icon: Terminal },
-  { to: "/admin/ai", label: "AI Studio", icon: GridFour },
-  { to: "/admin/talk", label: "Talk", icon: ChatCircle },
-  { to: "/admin/content", label: "Content", icon: GridFour },
-  { to: "/admin/design", label: "Design", icon: GridFour },
-  { to: "/admin/seo", label: "SEO / AEO", icon: GridFour },
-  { to: "/admin/versions", label: "History", icon: GridFour },
-  { to: "/admin/team", label: "Team", icon: GridFour },
-  { to: "/admin/billing", label: "Billing", icon: GridFour },
+  { to: "/admin/seo", label: "Growth", icon: GridFour },
+  { to: "/admin/settings", label: "Settings", icon: GridFour },
 ];
 
 function encodePath(path) {
