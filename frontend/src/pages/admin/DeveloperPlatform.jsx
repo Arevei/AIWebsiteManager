@@ -39,7 +39,7 @@ import {
   TrendUp,
   X,
 } from "@phosphor-icons/react";
-import { API, api, getToken } from "../../lib/api";
+import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useTheme } from "../../lib/theme";
 
@@ -479,13 +479,7 @@ export default function DeveloperPlatform() {
   );
   const workspaceUsage = Math.min(100, Math.round((recentWorkspaces.length / 20) * 100));
   const agentUsage = Math.min(100, Math.round((messages.filter((item) => item.role === "agent").length / 50) * 100));
-  const previewFrameUrl = useMemo(() => {
-    if (!workspace?.id || !runtime?.preview_url) return "";
-    const token = getToken();
-    const auth = token ? `?arevei_token=${encodeURIComponent(token)}` : "";
-    return `${API}/workspaces/${workspace.id}/runtime/preview-proxy${auth}`;
-  }, [workspace?.id, runtime?.preview_url]);
-  const visiblePreviewUrl = previewFrameUrl || runtime?.preview_url || "";
+  const visiblePreviewUrl = runtime?.preview_url || "";
 
   useEffect(() => {
     localStorage.setItem("arevei_sidebar_open", String(sidebarOpen));
@@ -990,9 +984,9 @@ export default function DeveloperPlatform() {
 
   useEffect(() => {
     if (screen !== "workspace" || rightView !== "preview" || !workspace?.id) return;
-    if (previewFrameUrl || previewLoading) return;
+    if (runtime?.preview_url || previewLoading) return;
     ensurePreview();
-  }, [ensurePreview, previewFrameUrl, previewLoading, rightView, screen, workspace?.id]);
+  }, [ensurePreview, previewLoading, rightView, runtime?.preview_url, screen, workspace?.id]);
 
   const handleSetRightView = (view) => {
     setRightView(view);
@@ -1308,7 +1302,7 @@ export default function DeveloperPlatform() {
                           <ArrowSquareOut size={15} />
                         </a>
                       </div>
-                      <iframe title="Live preview" src={previewFrameUrl || runtime.preview_url} className="min-h-0 flex-1 bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
+                      <iframe title="Live preview" src={runtime.preview_url} className="min-h-0 flex-1 bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
                     </div>
                   ) : runtime && ["preview_ready", "command_succeeded", "ready", "bridge_error"].includes(runtime.status) ? (
                     <div className="flex h-full items-center justify-center p-6">

@@ -38,7 +38,6 @@ export default function App() {
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<Signup />} />
               <Route path="/s/:slug" element={<TenantSite />} />
-
               <Route path="/admin" element={<Protected><Dashboard /></Protected>} />
               <Route path="/admin/dev" element={<Protected><DeveloperPlatform /></Protected>} />
               <Route path="/admin/agent" element={<Protected><Agent /></Protected>} />

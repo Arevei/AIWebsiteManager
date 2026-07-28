@@ -2482,6 +2482,13 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 samesite="lax",
                 max_age=60 * 60 * 6,
             )
+            response.set_cookie(
+                "arevei_preview_workspace_id",
+                workspace_id,
+                httponly=True,
+                samesite="lax",
+                max_age=60 * 60 * 6,
+            )
         return response
 
     @r.api_route("/workspaces/{workspace_id}/runtime/preview-proxy", methods=["GET", "HEAD"])

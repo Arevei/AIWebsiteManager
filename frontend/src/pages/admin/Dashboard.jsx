@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { API, api, getToken } from "../../lib/api";
+import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import {
   ArrowRight,
@@ -30,13 +30,6 @@ import {
 
 const LOGO = "/arevei-logo-mark.png";
 const CONTACT_EMAIL = "vinay@arevei.com";
-
-function workspacePreviewUrl(workspaceId) {
-  if (!workspaceId) return "";
-  const token = getToken();
-  const auth = token ? `?arevei_token=${encodeURIComponent(token)}` : "";
-  return `${API}/workspaces/${workspaceId}/runtime/preview-proxy${auth}`;
-}
 
 function demoNotice() {
   window.alert(`This is demo website content. Kindly contact with Arevei Team for website manager.\n\n${CONTACT_EMAIL}`);
@@ -232,9 +225,8 @@ function SiteMock({ compact = false }) {
 }
 
 function BuildProgress({ build, siteSlug, onDashboard }) {
-  const proxiedPreviewUrl = workspacePreviewUrl(build.workspaceId);
-  const previewHref = proxiedPreviewUrl || build.previewUrl || (siteSlug ? `/s/${siteSlug}` : "/admin/dev");
-  const hasWorkspacePreview = Boolean(proxiedPreviewUrl || build.previewUrl);
+  const hasWorkspacePreview = Boolean(build.workspaceId && build.previewUrl);
+  const previewHref = hasWorkspacePreview ? build.previewUrl : siteSlug ? `/s/${siteSlug}` : "/admin/dev";
   const steps = [
     ["Understanding Your Business", "Analyzing your business details and goals"],
     ["Planning Your Website", "Creating sitemap and strategy"],
@@ -309,7 +301,7 @@ function BuildProgress({ build, siteSlug, onDashboard }) {
               {hasWorkspacePreview ? (
                 <iframe
                   title="Workspace preview"
-                  src={proxiedPreviewUrl || build.previewUrl}
+                  src={build.previewUrl}
                   className="h-[320px] w-full rounded-xl border border-white/[.08] bg-[#091018]"
                 />
               ) : (
@@ -637,7 +629,7 @@ function GrowthCommandCenter() {
   );
 }
 
-function DashboardHome({ site, userName, mode, setMode, build }) {
+function DashboardHome({ site, userName, mode, setMode, build, onStartBuild, building }) {
   const navigate = useNavigate();
   const [autopilotEnabled, setAutopilotEnabled] = useState(true);
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -671,9 +663,8 @@ function DashboardHome({ site, userName, mode, setMode, build }) {
     [ChartLineUp, "Conversion Rate (7d)", "2.58%", "15.9%"],
     [Clock, "Avg. Session Duration (7d)", "2m 46s", "9.4%"],
   ];
-  const proxiedPreviewUrl = workspacePreviewUrl(build.workspaceId);
-  const liveHref = proxiedPreviewUrl || build.previewUrl || (site?.slug ? `/s/${site.slug}` : "/admin/dev");
-  const hasWorkspacePreview = Boolean(proxiedPreviewUrl || build.previewUrl);
+  const hasWorkspacePreview = Boolean(build.workspaceId && build.previewUrl);
+  const liveHref = hasWorkspacePreview ? build.previewUrl : site?.slug ? `/s/${site.slug}` : "/admin/dev";
   const displayDomain = site?.domain || "";
   const panelMap = {
     meetings: {
@@ -927,9 +918,18 @@ function DashboardHome({ site, userName, mode, setMode, build }) {
                     {hasWorkspacePreview ? (
                       <iframe
                         title="Workspace preview"
-                        src={proxiedPreviewUrl || build.previewUrl}
+                        src={build.previewUrl}
                         className="h-[180px] w-full rounded-xl border border-white/[.08] bg-[#091018]"
                       />
+                    ) : !build.workspaceId ? (
+                      <div className="flex h-[180px] flex-col items-center justify-center rounded-xl border border-dashed border-white/[.12] bg-white/[.025] p-5 text-center">
+                        <Sparkle size={24} className="mb-3 text-[#49e8ca]" />
+                        <div className="text-sm font-semibold">No workspace yet</div>
+                        <div className="mt-1 max-w-[260px] text-xs leading-5 text-white/42">Start the demo website build flow to create a live preview.</div>
+                        <button onClick={onStartBuild} disabled={building} className="mt-4 rounded-lg bg-[#49e8ca] px-4 py-2 text-xs font-semibold text-[#032c25] disabled:opacity-60">
+                          {building ? "Starting..." : "Get Started"}
+                        </button>
+                      </div>
                     ) : (
                       <SiteMock compact />
                     )}
@@ -1075,6 +1075,7 @@ export default function Dashboard() {
       return {};
     }
   });
+  const [workspaceChecked, setWorkspaceChecked] = useState(false);
   const userName = useMemo(() => user?.name?.split(" ")[0] || user?.email?.split("@")[0] || "Vinay", [user]);
 
   useEffect(() => {
@@ -1120,12 +1121,21 @@ export default function Dashboard() {
       const runtime = res.data?.runtime;
       if (workspace?.id && runtime?.preview_url) {
         updateBuild({ workspaceId: workspace.id, previewUrl: runtime.preview_url, progress: 100, status: "Ready to review" });
+        if (stage === "setup" || stage === "choose") setStagePersisted("dashboard");
       } else if (workspace?.id) {
-        updateBuild({ workspaceId: workspace.id });
+        updateBuild({ workspaceId: workspace.id, previewUrl: null });
+        if (stage === "setup" || stage === "choose") setStagePersisted("dashboard");
+      } else {
+        localStorage.removeItem("arevei-demo-build");
+        setBuild({});
+        setStagePersisted("setup");
       }
-    }).catch(() => {});
+      setWorkspaceChecked(true);
+    }).catch(() => {
+      if (!cancelled) setWorkspaceChecked(true);
+    });
     return () => { cancelled = true; };
-    // updateBuild intentionally writes local persisted preview state for the active workspace.
+    // updateBuild/setStagePersisted intentionally sync local persisted onboarding state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1159,8 +1169,20 @@ export default function Dashboard() {
     }
   };
 
+  if (!workspaceChecked) {
+    return (
+      <Shell className="aw-setup-shell">
+        <main className="grid min-h-screen place-items-center px-6 text-center">
+          <div>
+            <Sparkle size={26} className="mx-auto mb-3 animate-spin text-[#49e8ca]" />
+            <div className="text-sm text-white/55">Checking workspace...</div>
+          </div>
+        </main>
+      </Shell>
+    );
+  }
   if (stage === "setup") return <SetupWelcome onFillDemo={() => setStagePersisted("choose")} />;
   if (stage === "choose") return <ChooseFlow userName={userName} onBuild={startBuild} onDashboard={() => setStagePersisted("dashboard")} building={building} />;
   if (stage === "build") return <BuildProgress build={build} siteSlug={site?.slug} onDashboard={() => setStagePersisted("dashboard")} />;
-  return <DashboardHome site={site} userName={userName} mode={mode} setMode={setMode} build={build} />;
+  return <DashboardHome site={site} userName={userName} mode={mode} setMode={setMode} build={build} onStartBuild={startBuild} building={building} />;
 }
