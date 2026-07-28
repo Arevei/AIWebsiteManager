@@ -39,7 +39,7 @@ import {
   TrendUp,
   X,
 } from "@phosphor-icons/react";
-import { api } from "../../lib/api";
+import { api, withPreviewAuth } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useTheme } from "../../lib/theme";
 
@@ -53,6 +53,13 @@ const ADMIN_NAV = [
   { to: "/admin?view=settings", label: "Settings", icon: GearSix },
 ];
 const AREVEI_LOGO = "/arevei-logo-mark.png";
+const CODE_MODELS = [
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+  { id: "gpt-5.5", label: "GPT-5.5" },
+  { id: "gpt-5.2", label: "GPT-5.2" },
+];
 
 function encodePath(path) {
   return path.split("/").map(encodeURIComponent).join("/");
@@ -98,7 +105,7 @@ function IconButton({ children, title, onClick, className = "" }) {
   );
 }
 
-function PromptBox({ value, setValue, onSubmit, disabled, theme, compact, mode, setMode, openImport }) {
+function PromptBox({ value, setValue, onSubmit, disabled, theme, compact, mode, setMode, openImport, model, setModel }) {
   const p = palette(theme);
   return (
     <form onSubmit={onSubmit} className={cx("rounded-xl border shadow-[0_16px_45px_rgba(0,0,0,.14)]", p.input, compact ? "p-2" : "p-4")}>
@@ -123,9 +130,12 @@ function PromptBox({ value, setValue, onSubmit, disabled, theme, compact, mode, 
           <IconButton title="Attach" className={p.hover}>
             <Plus size={22} />
           </IconButton>
-          <button type="button" className={cx("flex h-9 items-center gap-2 rounded-md px-2 text-sm", p.hover)}>
-            <SquaresFour size={18} /> AREVEI Mini <CaretDown size={14} />
-          </button>
+          <label className={cx("flex h-9 items-center gap-2 rounded-md px-2 text-sm", p.hover)} title="Coding model">
+            <SquaresFour size={18} />
+            <select value={model} onChange={(event) => setModel?.(event.target.value)} className="max-w-[150px] bg-transparent text-sm outline-none">
+              {CODE_MODELS.map((item) => <option key={item.id} value={item.id} className="bg-[#07100f] text-white">{item.label}</option>)}
+            </select>
+          </label>
           {!compact && mode === "project" && (
             <button type="button" onClick={openImport} className={cx("flex h-9 items-center gap-2 rounded-md px-2 text-sm", p.hover)}>
               <GithubLogo size={18} /> Import from GitHub
@@ -311,7 +321,8 @@ function buildFileTree(items = []) {
     let node = root;
     parts.forEach((part, index) => {
       const path = parts.slice(0, index + 1).join("/");
-      const isFile = index === parts.length - 1;
+      const isLast = index === parts.length - 1;
+      const isFile = isLast && item.type !== "tree" && item.type !== "folder";
       if (!node.children.has(part)) {
         node.children.set(part, {
           name: part,
@@ -322,7 +333,7 @@ function buildFileTree(items = []) {
         });
       }
       node = node.children.get(part);
-      if (isFile) {
+      if (isLast && item.type !== "tree" && item.type !== "folder") {
         node.type = "file";
         node.loaded = Boolean(item.loaded);
         node.language = item.language;
@@ -354,11 +365,16 @@ function visibleFileRows(nodes, expanded) {
   return rows;
 }
 
-function FileTree({ tree, selectedPath, onSelect, theme }) {
+function FileTree({ tree, selectedPath, onSelect, theme, query, onContextMenu }) {
   const p = palette(theme);
   const nodes = useMemo(() => buildFileTree(tree), [tree]);
   const [expanded, setExpanded] = useState({ src: true, app: true, components: true, public: true });
-  const rows = useMemo(() => visibleFileRows(nodes, expanded), [nodes, expanded]);
+  const rows = useMemo(() => {
+    const all = visibleFileRows(nodes, expanded);
+    const value = (query || "").trim().toLowerCase();
+    if (!value) return all;
+    return all.filter((node) => node.path.toLowerCase().includes(value));
+  }, [nodes, expanded, query]);
   const toggle = (path) => setExpanded((value) => ({ ...value, [path]: !(value[path] ?? false) }));
   if (!tree?.length) return <div className={cx("px-4 py-6 text-sm", p.faint)}>No files loaded.</div>;
   return (
@@ -370,6 +386,10 @@ function FileTree({ tree, selectedPath, onSelect, theme }) {
           <button
             key={node.path}
             onClick={() => (isFolder ? toggle(node.path) : onSelect(node.path))}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              onContextMenu?.(event, node);
+            }}
             className={cx(
               "flex h-8 w-full items-center gap-2 pr-3 text-left font-mono text-[13px]",
               selectedPath === node.path ? p.active : `${p.muted} ${p.hover}`
@@ -443,6 +463,10 @@ export default function DeveloperPlatform() {
   const [project, setProject] = useState(null);
   const [chat, setChat] = useState(null);
   const [tree, setTree] = useState([]);
+  const [fileSearch, setFileSearch] = useState("");
+  const [fileSearchOpen, setFileSearchOpen] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const [treeMenu, setTreeMenu] = useState(null);
   const [selectedPath, setSelectedPath] = useState("");
   const [file, setFile] = useState(null);
   const [editorValue, setEditorValue] = useState("");
@@ -466,6 +490,7 @@ export default function DeveloperPlatform() {
   const [agentStatus, setAgentStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("gpt-5.6-sol");
   const p = palette(theme);
 
   const currentTitle = useMemo(
@@ -479,7 +504,7 @@ export default function DeveloperPlatform() {
   );
   const workspaceUsage = Math.min(100, Math.round((recentWorkspaces.length / 20) * 100));
   const agentUsage = Math.min(100, Math.round((messages.filter((item) => item.role === "agent").length / 50) * 100));
-  const visiblePreviewUrl = runtime?.preview_url || "";
+  const visiblePreviewUrl = withPreviewAuth(runtime?.preview_url || "");
 
   useEffect(() => {
     localStorage.setItem("arevei_sidebar_open", String(sidebarOpen));
@@ -705,7 +730,7 @@ export default function DeveloperPlatform() {
     setScreen("workspace");
     await autoSetupWorkspace(res.data);
     setAgentStatus("Reading files and preparing first code proposal...");
-    await api.post(`/workspaces/${res.data.id}/ai/chat`, { message });
+    await api.post(`/workspaces/${res.data.id}/ai/chat`, { message, model: selectedModel });
     await refreshWorkspace(res.data.id);
     await loadRecentWorkspaces();
     setAgentStatus("");
@@ -738,7 +763,7 @@ export default function DeveloperPlatform() {
     try {
       if (screen === "workspace" && workspace) {
         setAgentStatus("Reading workspace context and preparing edits...");
-        const res = await api.post(`/workspaces/${workspace.id}/ai/chat`, { message });
+        const res = await api.post(`/workspaces/${workspace.id}/ai/chat`, { message, model: selectedModel });
         await refreshWorkspace(workspace.id);
         await loadRecentWorkspaces();
         toast.success(res.data.changes?.length ? "AI code changes ready" : "AI responded");
@@ -833,6 +858,84 @@ export default function DeveloperPlatform() {
     }
   };
 
+  const createWorkspacePath = async (type, basePath = "") => {
+    if (!workspace) return;
+    const label = type === "folder" ? "folder path" : "file path";
+    const suggested = basePath ? `${basePath}/` : "";
+    const path = window.prompt(`New ${label}`, suggested);
+    if (!path?.trim()) return;
+    try {
+      const res = await api.post(`/workspaces/${workspace.id}/files`, {
+        path: path.trim(),
+        type,
+        content: type === "file" ? "" : undefined,
+      });
+      await refreshWorkspace(workspace.id);
+      if (type === "file") await openFile(workspace.id, res.data.path, true);
+      toast.success(type === "folder" ? "Folder created" : "File created");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || `Could not create ${type}`);
+    }
+  };
+
+  const renameWorkspacePath = async (path) => {
+    if (!workspace || !path) return;
+    const nextPath = window.prompt("Rename or move path", path);
+    if (!nextPath?.trim() || nextPath.trim() === path) return;
+    try {
+      const res = await api.patch(`/workspaces/${workspace.id}/files/${encodePath(path)}`, { new_path: nextPath.trim() });
+      setOpenFiles((items) => items.map((item) => item.path === path ? { ...item, path: res.data.path } : item));
+      setFileDrafts((drafts) => {
+        const next = { ...drafts };
+        if (Object.prototype.hasOwnProperty.call(next, path)) {
+          next[res.data.path] = next[path];
+          delete next[path];
+        }
+        return next;
+      });
+      if (selectedPath === path) setSelectedPath(res.data.path);
+      await refreshWorkspace(workspace.id);
+      toast.success("Renamed");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Rename failed");
+    }
+  };
+
+  const deleteWorkspacePath = async (path) => {
+    if (!workspace || !path) return;
+    if (!window.confirm(`Delete ${path}?`)) return;
+    try {
+      await api.delete(`/workspaces/${workspace.id}/files/${encodePath(path)}`);
+      const removedPrefix = `${path}/`;
+      setOpenFiles((items) => items.filter((item) => item.path !== path && !item.path.startsWith(removedPrefix)));
+      if (selectedPath === path || selectedPath.startsWith(removedPrefix)) {
+        setSelectedPath("");
+        setFile(null);
+        setEditorValue("");
+      }
+      await refreshWorkspace(workspace.id);
+      toast.success("Deleted");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Delete failed");
+    }
+  };
+
+  const searchWorkspaceFiles = async (value = fileSearch) => {
+    if (!workspace) return;
+    const query = value.trim();
+    setFileSearch(value);
+    if (!query) {
+      setSearchResults([]);
+      return;
+    }
+    try {
+      const res = await api.get(`/workspaces/${workspace.id}/search`, { params: { q: query } });
+      setSearchResults(res.data.results || []);
+    } catch {
+      setSearchResults([]);
+    }
+  };
+
   const saveFile = async () => {
     if (!workspace || !selectedPath) return;
     try {
@@ -840,7 +943,6 @@ export default function DeveloperPlatform() {
       setFile(res.data);
       setOpenFiles((items) => items.map((item) => item.path === selectedPath ? { ...item, content: editorValue } : item));
       setFileDrafts((drafts) => ({ ...drafts, [selectedPath]: editorValue }));
-      await api.post(`/workspaces/${workspace.id}/runtime/sync`);
       await refreshWorkspace(workspace.id);
       toast.success("Saved");
     } catch (err) {
@@ -853,15 +955,9 @@ export default function DeveloperPlatform() {
   const applyChange = async (changeId, accept) => {
     if (!workspace) return;
     setLoading(true);
-    setAgentStatus(accept ? "Applying approved files and syncing runtime..." : "Rejecting proposed changes...");
+    setAgentStatus(accept ? "Accepting sandbox diff..." : "Restoring rejected files...");
     try {
       await api.post(`/workspaces/${workspace.id}/changes/${changeId}/apply`, { accept });
-      try {
-        await api.post(`/workspaces/${workspace.id}/runtime/sync`);
-        // if (accept) await runBuildCheck("accepted AI changes");
-      } catch (syncErr) {
-        toast.error(syncErr.response?.data?.detail || "Applied locally, but runtime check failed");
-      }
       await refreshWorkspace(workspace.id);
       setRightView("preview");
       toast.success(accept ? "Accepted" : "Rejected");
@@ -882,6 +978,7 @@ export default function DeveloperPlatform() {
       setAgentStatus("Build failed. Asking agent to prepare a repair proposal...");
       await api.post(`/workspaces/${workspace.id}/ai/chat`, {
         message: `The build failed after ${reason}. Read the project files and prepare a focused fix. Build command: ${runtime.build_command}\n\nBuild output:\n${res.data.output || ""}`,
+        model: selectedModel,
       });
       toast.error("Build failed. AI repair proposal is ready to review.");
     }
@@ -1157,6 +1254,8 @@ export default function DeveloperPlatform() {
                 mode={homeMode}
                 setMode={setHomeMode}
                 openImport={() => setImportOpen(true)}
+                model={selectedModel}
+                setModel={setSelectedModel}
               />
             </div>
           </div>
@@ -1232,21 +1331,63 @@ export default function DeveloperPlatform() {
               </div>
               <div className={cx("border-t p-3", p.side)}>
                 <PendingChangeReview changes={changes} onApply={applyChange} loading={loading} theme={theme} />
-                <PromptBox value={followUp} setValue={setFollowUp} onSubmit={submitFollowUp} disabled={loading} theme={theme} compact />
+                <PromptBox value={followUp} setValue={setFollowUp} onSubmit={submitFollowUp} disabled={loading} theme={theme} compact model={selectedModel} setModel={setSelectedModel} />
               </div>
             </section>
 
             <section className={cx("flex w-[300px] shrink-0 flex-col border-r", p.side)}>
               <div className={cx("flex h-11 items-center gap-4 border-b px-4", p.side, p.muted)}>
-                <Folder size={19} />
-                <MagnifyingGlass size={19} />
-                <GridFour size={19} />
+                <button title="Explorer" onClick={() => setFileSearchOpen(false)} className={cx("grid h-8 w-8 place-items-center rounded", !fileSearchOpen && p.active)}><Folder size={19} /></button>
+                <button title="Search files" onClick={() => setFileSearchOpen((value) => !value)} className={cx("grid h-8 w-8 place-items-center rounded", fileSearchOpen && p.active)}><MagnifyingGlass size={19} /></button>
+                <button title="New file" onClick={() => createWorkspacePath("file")} className={cx("grid h-8 w-8 place-items-center rounded", p.hover)}><File size={17} /></button>
+                <button title="New folder" onClick={() => createWorkspacePath("folder")} className={cx("grid h-8 w-8 place-items-center rounded", p.hover)}><FolderOpen size={17} /></button>
               </div>
               <div className={cx("flex h-10 items-center justify-between border-b px-4", p.side)}>
                 <span className={cx("text-xs uppercase tracking-[.08em]", p.muted)}>Project</span>
-                <div className={cx("flex gap-2", p.faint)}><Plus size={17} /><DotsThree size={17} /></div>
+                <div className={cx("flex gap-1", p.faint)}>
+                  <button title="New file" onClick={() => createWorkspacePath("file")} className={cx("grid h-7 w-7 place-items-center rounded", p.hover)}><Plus size={17} /></button>
+                  <button title="More" onClick={(event) => setTreeMenu({ x: event.clientX, y: event.clientY, node: { path: "", type: "folder" } })} className={cx("grid h-7 w-7 place-items-center rounded", p.hover)}><DotsThree size={17} /></button>
+                </div>
               </div>
-              <FileTree tree={tree} selectedPath={selectedPath} onSelect={(path) => openFile(null, path)} theme={theme} />
+              {fileSearchOpen && (
+                <div className={cx("border-b p-3", p.side)}>
+                  <div className={cx("flex h-9 items-center gap-2 rounded-md border px-2", p.input)}>
+                    <MagnifyingGlass size={16} className={p.faint} />
+                    <input
+                      value={fileSearch}
+                      onChange={(event) => searchWorkspaceFiles(event.target.value)}
+                      placeholder="Search files and code"
+                      className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+                    />
+                  </div>
+                  {searchResults.length > 0 && (
+                    <div className="mt-2 max-h-44 overflow-y-auto">
+                      {searchResults.map((result, index) => (
+                        <button key={`${result.path}-${result.line || 0}-${index}`} onClick={() => openFile(null, result.path)} className={cx("block w-full rounded px-2 py-1.5 text-left", p.hover)}>
+                          <div className="truncate font-mono text-[11px] text-[#0d9f7c]">{result.path}{result.line ? `:${result.line}` : ""}</div>
+                          <div className={cx("truncate text-[11px]", p.faint)}>{result.preview}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <FileTree
+                tree={tree}
+                selectedPath={selectedPath}
+                onSelect={(path) => openFile(null, path)}
+                theme={theme}
+                query={fileSearchOpen ? fileSearch : ""}
+                onContextMenu={(event, node) => setTreeMenu({ x: event.clientX, y: event.clientY, node })}
+              />
+              {treeMenu && (
+                <div className={cx("fixed z-[80] w-44 rounded-lg border p-1 shadow-2xl", p.panel)} style={{ left: treeMenu.x, top: treeMenu.y }} onMouseLeave={() => setTreeMenu(null)}>
+                  <button onClick={() => { createWorkspacePath("file", treeMenu.node.type === "folder" ? treeMenu.node.path : treeMenu.node.path.split("/").slice(0, -1).join("/")); setTreeMenu(null); }} className={cx("flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs", p.hover)}><File size={15} /> New file</button>
+                  <button onClick={() => { createWorkspacePath("folder", treeMenu.node.type === "folder" ? treeMenu.node.path : treeMenu.node.path.split("/").slice(0, -1).join("/")); setTreeMenu(null); }} className={cx("flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs", p.hover)}><Folder size={15} /> New folder</button>
+                  {treeMenu.node.path && <button onClick={() => { renameWorkspacePath(treeMenu.node.path); setTreeMenu(null); }} className={cx("flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs", p.hover)}><Code size={15} /> Rename</button>}
+                  {treeMenu.node.path && <button onClick={() => { deleteWorkspacePath(treeMenu.node.path); setTreeMenu(null); }} className={cx("flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-red-300", p.hover)}><Trash size={15} /> Delete</button>}
+                </div>
+              )}
             </section>
 
             <section className="flex min-w-0 flex-1 flex-col">
@@ -1302,7 +1443,7 @@ export default function DeveloperPlatform() {
                           <ArrowSquareOut size={15} />
                         </a>
                       </div>
-                      <iframe title="Live preview" src={runtime.preview_url} className="min-h-0 flex-1 bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
+                      <iframe title="Live preview" src={visiblePreviewUrl} className="min-h-0 flex-1 bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
                     </div>
                   ) : runtime && ["preview_ready", "command_succeeded", "ready", "bridge_error"].includes(runtime.status) ? (
                     <div className="flex h-full items-center justify-center p-6">

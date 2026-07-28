@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { api } from "../../lib/api";
+import { api, withPreviewAuth } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import {
   ArrowRight,
@@ -226,7 +226,8 @@ function SiteMock({ compact = false }) {
 
 function BuildProgress({ build, siteSlug, onDashboard }) {
   const hasWorkspacePreview = Boolean(build.workspaceId && build.previewUrl);
-  const previewHref = hasWorkspacePreview ? build.previewUrl : siteSlug ? `/s/${siteSlug}` : "/admin/dev";
+  const authedPreviewUrl = hasWorkspacePreview ? withPreviewAuth(build.previewUrl) : "";
+  const previewHref = hasWorkspacePreview ? authedPreviewUrl : siteSlug ? `/s/${siteSlug}` : "/admin/dev";
   const steps = [
     ["Understanding Your Business", "Analyzing your business details and goals"],
     ["Planning Your Website", "Creating sitemap and strategy"],
@@ -301,7 +302,7 @@ function BuildProgress({ build, siteSlug, onDashboard }) {
               {hasWorkspacePreview ? (
                 <iframe
                   title="Workspace preview"
-                  src={build.previewUrl}
+                  src={authedPreviewUrl}
                   className="h-[320px] w-full rounded-xl border border-white/[.08] bg-[#091018]"
                 />
               ) : (
@@ -664,7 +665,8 @@ function DashboardHome({ site, userName, mode, setMode, build, onStartBuild, bui
     [Clock, "Avg. Session Duration (7d)", "2m 46s", "9.4%"],
   ];
   const hasWorkspacePreview = Boolean(build.workspaceId && build.previewUrl);
-  const liveHref = hasWorkspacePreview ? build.previewUrl : site?.slug ? `/s/${site.slug}` : "/admin/dev";
+  const authedPreviewUrl = hasWorkspacePreview ? withPreviewAuth(build.previewUrl) : "";
+  const liveHref = hasWorkspacePreview ? authedPreviewUrl : site?.slug ? `/s/${site.slug}` : "/admin/dev";
   const displayDomain = site?.domain || "";
   const panelMap = {
     meetings: {
@@ -918,7 +920,7 @@ function DashboardHome({ site, userName, mode, setMode, build, onStartBuild, bui
                     {hasWorkspacePreview ? (
                       <iframe
                         title="Workspace preview"
-                        src={build.previewUrl}
+                        src={authedPreviewUrl}
                         className="h-[180px] w-full rounded-xl border border-white/[.08] bg-[#091018]"
                       />
                     ) : !build.workspaceId ? (
