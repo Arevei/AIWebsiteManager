@@ -8,6 +8,7 @@ managed Kubernetes backend can be wired behind the same workspace API.
 from __future__ import annotations
 
 import base64
+import asyncio
 import difflib
 import html
 import json
@@ -16,6 +17,7 @@ import posixpath
 import re
 import shlex
 import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, parse_qs, urlencode, urlsplit, urlunsplit
 
@@ -23,7 +25,8 @@ from urllib.parse import parse_qsl, parse_qs, urlencode, urlsplit, urlunsplit
 import jwt
 import requests
 # pyrefly: ignore [missing-import]
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
+from fastapi.responses import StreamingResponse
 # pyrefly: ignore [missing-import]
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -34,6 +37,9 @@ GITHUB_API = "https://api.github.com"
 MAX_INDEX_FILES = 120
 MAX_FILE_BYTES = 180_000
 MAX_TREE_FILES = 5000
+CODEX_AGENT_DIR = "/tmp/arevei-codex-agent"
+CODEX_AGENT_TIMEOUT_SECONDS = 1800
+CODEX_AGENT_SOURCE_DIR = Path(__file__).with_name("codex_agent")
 
 
 MOCK_FILES = {
@@ -285,7 +291,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         )
         if not doc:
             raise HTTPException(404, "Workspace not found")
-        return doc
+        return await _cleanup_pseudo_workspace_paths(doc)
 
     async def _repo(repo_id: str, user: dict) -> dict:
         doc = await db.repositories.find_one(
@@ -308,6 +314,14 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             {"_id": 0},
         )
         if existing:
+            if isinstance(existing.get("content"), str):
+                fixed = _dedupe_repeated_text(existing.get("content", ""))
+                if fixed != existing.get("content"):
+                    existing = {**existing, "content": fixed, "updated_at": now_iso()}
+                    await db.workspace_files.update_one(
+                        {"workspace_id": workspace_id, "path": path},
+                        {"$set": {"content": fixed, "updated_at": existing["updated_at"]}},
+                    )
             return existing
         repo = {
             "id": new_id(),
@@ -599,6 +613,110 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             ),
         }
 
+    def _normalize_generated_file_content(path: str, content: str) -> str:
+        value = str(content or "").replace("\r\n", "\n")
+        stripped = value.strip()
+        if not stripped:
+            return value
+
+        if len(stripped) % 2 == 0:
+            midpoint = len(stripped) // 2
+            left = stripped[:midpoint].strip()
+            right = stripped[midpoint:].strip()
+            if left and left == right:
+                value = left + ("\n" if content.endswith(("\n", "\r\n")) else "")
+                stripped = value.strip()
+
+        if path.endswith((".js", ".jsx", ".ts", ".tsx")):
+            default_count = len(re.findall(r"\bexport\s+default\s+function\b|\bexport\s+default\s+", stripped))
+            if default_count > 1:
+                starts = [m.start() for m in re.finditer(r"(?:^|\n)import\s+", stripped)]
+                if len(starts) > 1:
+                    value = stripped[:starts[1]].rstrip() + "\n"
+        return value
+
+    def _dedupe_repeated_text(value: str) -> str:
+        text = str(value or "")
+        normalized = text.replace("\r\n", "\n")
+        stripped = normalized.strip()
+        if not stripped or len(stripped) % 2:
+            return text
+        midpoint = len(stripped) // 2
+        left = stripped[:midpoint].strip()
+        right = stripped[midpoint:].strip()
+        if left and left == right:
+            suffix = "\n" if normalized.endswith("\n") else ""
+            return left + suffix
+        return text
+
+    def _make_normalized_diff(path: str, old: str, new: str) -> dict:
+        return _make_diff(path, old, _normalize_generated_file_content(path, new))
+
+    def _agent_event(event_type: str, message: str, **extra) -> dict:
+        return {
+            "id": new_id(),
+            "type": event_type,
+            "message": message,
+            "created_at": now_iso(),
+            **extra,
+        }
+
+    def _stream_event(event_type: str, message: str, **extra) -> dict:
+        aliases = {
+            "agent_started": "activity_started",
+            "agent_finished": "agent_finished",
+            "tool_started": "activity_started",
+            "tool_finished": "activity_finished",
+            "tool_failed": "error",
+            "terminal_output": "command_output",
+            "git_changed": "diff_ready",
+            "open_file": "file_read",
+            "file_edit_started": "file_edit_started",
+            "file_edit_finished": "file_edit_finished",
+            "message_delta": "message_delta",
+        }
+        return _agent_event(aliases.get(event_type, event_type), message, raw_type=event_type, **extra)
+
+    def _approval_risk(command: str) -> str:
+        lower = (command or "").lower()
+        destructive = (" rm ", "rm -", "git reset", "git clean", "drop ", "delete ", "shutdown", "kill ")
+        if any(token in f" {lower} " for token in destructive):
+            return "high"
+        if any(token in lower for token in ("install", "build", "test", "lint", "dev", "start")):
+            return "medium"
+        return "low"
+
+    def _attachment_context(attachments: list[dict]) -> str:
+        if not attachments:
+            return ""
+        lines = ["\n\nAttached user context files:"]
+        for item in attachments[:12]:
+            name = item.get("name") or item.get("filename") or item.get("id")
+            mime = item.get("mime_type") or "unknown"
+            sandbox_path = item.get("sandbox_path") or item.get("stored_path")
+            lines.append(f"- {name} ({mime}) at {sandbox_path}")
+            preview = (item.get("text_preview") or "").strip()
+            if preview:
+                lines.append(f"  Preview: {preview[:500]}")
+        return "\n".join(lines)
+
+    def _plan_markdown(message: str, attachments: list[dict]) -> str:
+        attach_line = ""
+        if attachments:
+            names = ", ".join((item.get("name") or item.get("filename") or "attachment") for item in attachments[:6])
+            attach_line = f"\n- Use attached context: {names}"
+        return (
+            "## Implementation Plan\n\n"
+            "### Goal\n"
+            f"- {message.strip()[:500]}\n"
+            f"{attach_line}\n\n"
+            "### Steps\n"
+            "- Inspect the relevant project files before editing.\n"
+            "- Make focused changes in the existing code style.\n"
+            "- Run only necessary checks after asking for terminal approval when required.\n"
+            "- Return changed files, verification notes, and remaining risks.\n"
+        )
+
     def _safe_text(text: str, limit: int = 5000) -> str:
         return (text or "")[:limit]
 
@@ -628,36 +746,106 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         return "\n".join(chunks)
 
     def _coding_model_from_payload(value: str | None) -> str:
-        allowed = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.2"}
+        allowed = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2", "gpt-5.3-codex"}
         model = (value or "").strip()
         if model in allowed:
             return model
         return os.environ.get("OPENAI_CODING_MODEL") or os.environ.get("OPENAI_MODEL", "gpt-5.6-sol")
 
+    def _codex_agent_enabled() -> bool:
+        return os.environ.get("WORKSPACE_CODEX_AGENT_ENABLED", "").lower() in {"1", "true", "yes", "on"}
+
+    def _codex_agent_api_key() -> str | None:
+        return os.environ.get("SANDBOX_OPENAI_API_KEY") or os.environ.get("CODEX_API_KEY") or os.environ.get("OPENAI_API_KEY")
+
+    def _codex_use_existing_sandbox_auth() -> bool:
+        return os.environ.get("WORKSPACE_CODEX_USE_SANDBOX_ENV", "").lower() in {"1", "true", "yes", "on"}
+
+    def _codex_agent_timeout_seconds() -> int:
+        try:
+            return int(os.environ.get("WORKSPACE_CODEX_AGENT_TIMEOUT_SECONDS") or os.environ.get("WORKSPACE_CODEX_AGENT_TIMEOUT") or CODEX_AGENT_TIMEOUT_SECONDS)
+        except ValueError:
+            return CODEX_AGENT_TIMEOUT_SECONDS
+
+    def _codebase_design_brief(files: list[dict]) -> dict:
+        by_path = {f["path"]: f for f in files}
+        brand = _extract_brand_context(by_path)
+        css_files = [
+            {
+                "path": f["path"],
+                "tokens": sorted(set(re.findall(r"--[a-zA-Z0-9_-]+", f.get("content", ""))))[:80],
+                "classes": sorted(set(re.findall(r"\.([a-zA-Z][a-zA-Z0-9_-]+)", f.get("content", ""))))[:120],
+                "colors": sorted(set(re.findall(r"#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)", f.get("content", ""))))[:80],
+            }
+            for f in files
+            if f["path"].endswith(".css") and not f["path"].endswith(".min.css")
+        ][:8]
+        component_files = [
+            f["path"] for f in files
+            if f["path"].endswith((".jsx", ".tsx", ".js", ".ts")) and (
+                "/components/" in f["path"] or f["path"].lower().endswith(("app.jsx", "app.tsx", "page.tsx", "index.tsx"))
+            )
+        ][:80]
+        route_files = [
+            f["path"] for f in files
+            if any(part in f["path"].lower() for part in ("/pages/", "/app/")) or f["path"].lower().endswith(("router.jsx", "router.tsx"))
+        ][:80]
+        return {
+            "brand": brand,
+            "css_files": css_files,
+            "component_files": component_files,
+            "route_files": route_files,
+            "instruction": (
+                "Preserve the existing visual system. Reuse current components, class names, CSS variables, spacing, "
+                "colors, typography, route conventions, and file naming. Do not replace the app with a generic template. "
+                "For new pages, create separate route/page/component files and wire them through the existing routing style. "
+                "For homepage expansions, keep the current brand and layout language, add sections where they belong, "
+                "and only extend CSS using the existing naming and token style."
+            ),
+        }
+
     async def _openai_code_proposal(message: str, files: list[dict], model: str | None = None) -> tuple[str, list[dict]] | None:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             return None
+        design_brief = _codebase_design_brief(files)
         context_files = []
-        for f in files[:35]:
+        priority_files = sorted(
+            files,
+            key=lambda f: (
+                0 if f["path"] in {"package.json", "src/App.jsx", "src/App.tsx", "src/index.css", "src/App.css"} else
+                1 if f["path"].endswith((".css", ".jsx", ".tsx", ".js", ".ts")) else
+                2
+            ),
+        )
+        for f in priority_files[:60]:
             path = f["path"]
             if path.endswith((".png", ".jpg", ".jpeg", ".gif", ".ico", ".lock")):
                 continue
             context_files.append({
                 "path": path,
                 "language": f.get("language", "plaintext"),
-                "content": _safe_text(f.get("content", ""), 7000),
+                "content": _safe_text(f.get("content", ""), 10000),
             })
         prompt = {
             "task": message,
+            "design_brief": design_brief,
+            "repository_tree": [f["path"] for f in files[:800]],
             "repo_files": context_files,
             "rules": [
                 "Return ONLY valid JSON.",
-                "Make practical code edits across one or more files.",
+                "Do not ask the user for repository context. The repository_tree and repo_files in this payload are the available context; produce edits from them.",
+                "Never create files named __REQUEST_FOR_REPO_CONTEXT__, REQUEST_CONTEXT, TODO_CONTEXT, or similar.",
+                "You are operating a real codebase. Read the provided files and infer the framework, routing style, component structure, and design system before editing.",
+                "Make practical code edits across one or more files. Create new files when the task asks for pages, routes, components, policies, contact flows, or larger app structure.",
                 "Each change must contain path, content, and reason.",
                 "content must be the complete new file content, not a patch.",
                 "Do not include unchanged files.",
-                "Prefer small cohesive changes that can be previewed and committed.",
+                "Never duplicate an entire file inside itself.",
+                "Never replace the existing design with a generic template unless the user explicitly asks for a redesign.",
+                "Reuse existing colors, spacing, typography, class naming, components, route conventions, and page layout patterns.",
+                "For a request like many homepage sections plus pages, update/create the necessary Home/page/component files and wire navigation/routes completely.",
+                "Prefer cohesive multi-file changes that can be previewed, built, tested, and committed.",
             ],
             "schema": {
                 "assistant_message": "short summary",
@@ -676,31 +864,39 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                     "input": [
                         {
                             "role": "developer",
-                            "content": "You are a senior coding agent. Produce safe preview-first file edits as strict JSON.",
+                            "content": (
+                                "You are Codex inside an AI coding workspace. Produce production-quality code edits as strict JSON. "
+                                "Your first responsibility is to preserve and extend the existing project design and architecture. "
+                                "Do not use generic placeholder layouts when the repository provides design signals."
+                            ),
                         },
                         {"role": "user", "content": json.dumps(prompt)},
                     ],
-                    "temperature": 0.2,
                 },
                 timeout=60,
             )
             if res.status_code >= 400:
-                return None
+                detail = res.text[:500]
+                raise RuntimeError(f"OpenAI Responses API error {res.status_code}: {detail}")
             parsed = _extract_json_object(_response_output_text(res.json()))
-        except Exception:
-            return None
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(f"OpenAI coding request failed: {str(exc)[:500]}") from exc
 
         by_path = {f["path"]: f for f in files}
         diffs: list[dict] = []
         for change in parsed.get("changes", [])[:8]:
             path = str(change.get("path", "")).strip().replace("\\", "/")
             content = change.get("content")
+            if path.startswith("__") or path.upper().startswith("REQUEST_") or path.upper().endswith("_CONTEXT__"):
+                continue
             if not path or content is None or path.startswith("../") or "/../" in path:
                 continue
             old = by_path.get(path, {}).get("content", "")
             if old == content:
                 continue
-            diff = _make_diff(path, old, str(content))
+            diff = _make_normalized_diff(path, old, str(content))
             diff["reason"] = change.get("reason", "")
             diffs.append(diff)
         if not diffs:
@@ -746,56 +942,30 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         except Exception as exc:
             return f"General chat is temporarily unavailable. ({str(exc)[:120]})"
 
-    def _replace_app_for_feature(message: str) -> str:
-        title = "AI Development Workspace"
-        if "landing" in message.lower():
-            title = "Launch faster with AI"
-        elif "dashboard" in message.lower():
-            title = "Project Control Center"
-        return (
-            "import React from 'react';\n"
-            "import './index.css';\n\n"
-            "const features = [\n"
-            "  'Connect a GitHub repository',\n"
-            "  'Ask AI to edit multiple files',\n"
-            "  'Review every diff before committing',\n"
-            "];\n\n"
-            "export default function App() {\n"
-            "  return (\n"
-            "    <main className=\"page-shell\">\n"
-            "      <section className=\"hero-panel\">\n"
-            f"        <p className=\"eyebrow\">{html.escape(message[:70])}</p>\n"
-            f"        <h1>{title}</h1>\n"
-            "        <p className=\"lede\">A polished workspace experience generated from your prompt, ready to review before it is committed.</p>\n"
-            "        <div className=\"actions\"><button>Preview change</button><button className=\"secondary\">Commit safely</button></div>\n"
-            "      </section>\n"
-            "      <section className=\"feature-grid\">\n"
-            "        {features.map((feature) => <article key={feature}><span /> <h2>{feature}</h2><p>Built as a real file edit, not a comment placeholder.</p></article>)}\n"
-            "      </section>\n"
-            "    </main>\n"
-            "  );\n"
-            "}\n"
+    def _extract_brand_context(files_by_path: dict[str, dict]) -> dict:
+        app_source = "\n".join(
+            str(files_by_path.get(path, {}).get("content", ""))
+            for path in ("src/App.jsx", "src/App.tsx", "src/App.js", "app/page.tsx", "pages/index.tsx")
         )
-
-    def _feature_css() -> str:
-        return (
-            ":root { color: #17211f; background: #f4f7f3; font-family: Inter, system-ui, sans-serif; }\n"
-            "body { margin: 0; background: #f4f7f3; }\n"
-            ".page-shell { min-height: 100vh; padding: 48px; box-sizing: border-box; }\n"
-            ".hero-panel { max-width: 980px; background: #ffffff; border: 1px solid #d9dfd7; padding: 44px; box-shadow: 0 24px 60px rgba(23,33,31,.08); }\n"
-            ".eyebrow { margin: 0 0 14px; color: #087a67; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .12em; }\n"
-            "h1 { margin: 0; max-width: 780px; font-size: clamp(42px, 8vw, 82px); line-height: .95; letter-spacing: 0; }\n"
-            ".lede { max-width: 620px; font-size: 18px; line-height: 1.7; color: #5d6864; }\n"
-            ".actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 26px; }\n"
-            "button { border: 0; background: #111917; color: #fff; padding: 13px 18px; font-weight: 800; cursor: pointer; }\n"
-            "button.secondary { background: #dff7ee; color: #0b4d40; }\n"
-            ".feature-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 18px; max-width: 980px; }\n"
-            "article { background: #ffffff; border: 1px solid #d9dfd7; padding: 22px; }\n"
-            "article span { display: block; width: 34px; height: 4px; background: #10b798; margin-bottom: 18px; }\n"
-            "article h2 { font-size: 18px; margin: 0 0 8px; }\n"
-            "article p { color: #64706c; line-height: 1.55; margin: 0; }\n"
-            "@media (max-width: 760px) { .page-shell { padding: 20px; } .hero-panel { padding: 26px; } .feature-grid { grid-template-columns: 1fr; } }\n"
+        css_source = "\n".join(
+            str(doc.get("content", ""))
+            for path, doc in files_by_path.items()
+            if path.endswith(".css") and not path.endswith(".min.css")
         )
+        brand = "DemoBiz"
+        for pattern in (
+            r"className=\{[^}]*brand[^}]*\}[^>]*>([^<{]+)",
+            r"className=\"[^\"]*brand[^\"]*\"[^>]*>([^<{]+)",
+            r"<div className=\"brand\"[^>]*>(?:<span[^>]*>\s*</span>)?([^<{]+)",
+        ):
+            match = re.search(pattern, app_source)
+            if match and match.group(1).strip():
+                brand = html.unescape(match.group(1)).strip()
+                break
+        colors = re.findall(r"#[0-9a-fA-F]{6}", css_source)
+        accent = next((color for color in colors if color.lower() not in {"#ffffff", "#000000", "#111111"}), "#0b7f6d")
+        dark = next((color for color in colors if color.lower() in {"#111917", "#071014", "#070b0f", "#141917"}), "#111917")
+        return {"brand": brand[:40], "accent": accent, "dark": dark}
 
     def _text_from_jsx(source: str) -> str:
         texts = []
@@ -855,9 +1025,17 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         return {"kind": "static-jsx-preview", "html": shell}
 
     async def _active_files(workspace_id: str) -> list[dict]:
-        return await db.workspace_files.find(
+        files = await db.workspace_files.find(
             {"workspace_id": workspace_id}, {"_id": 0}
         ).sort("path", 1).to_list(1000)
+        cleaned = []
+        for f in files:
+            if _is_pseudo_agent_path(f.get("path")):
+                continue
+            if isinstance(f.get("content"), str):
+                f = {**f, "content": _dedupe_repeated_text(f.get("content", ""))}
+            cleaned.append(f)
+        return cleaned
 
     async def _runtime_session(workspace_id: str, user: dict) -> dict | None:
         return await db.runtime_sessions.find_one(
@@ -938,6 +1116,38 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         if not clean or clean.startswith("../") or clean == ".." or "/../" in f"/{clean}/":
             raise HTTPException(400, "Unsafe workspace path")
         return clean
+
+    def _safe_attachment_name(name: str) -> str:
+        base = posixpath.basename((name or "attachment").replace("\\", "/"))
+        safe = re.sub(r"[^a-zA-Z0-9._-]+", "-", base).strip(".-")
+        return safe[:120] or "attachment"
+
+    def _attachment_allowed(filename: str, content_type: str | None) -> bool:
+        ext = posixpath.splitext(filename.lower())[1]
+        allowed_ext = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".txt", ".md", ".json", ".csv", ".html", ".css", ".js", ".jsx", ".ts", ".tsx", ".pdf", ".doc", ".docx"}
+        allowed_mime_prefix = ("image/", "text/")
+        allowed_mime = {
+            "application/json",
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }
+        mime = content_type or ""
+        return ext in allowed_ext or mime.startswith(allowed_mime_prefix) or mime in allowed_mime
+
+    def _attachment_text_preview(data: bytes, content_type: str | None, filename: str) -> str:
+        ext = posixpath.splitext(filename.lower())[1]
+        if (content_type or "").startswith("text/") or ext in {".txt", ".md", ".json", ".csv", ".html", ".css", ".js", ".jsx", ".ts", ".tsx"}:
+            try:
+                return data[:8000].decode("utf-8", errors="replace")[:2000]
+            except Exception:
+                return ""
+        return ""
+
+    def _is_pseudo_agent_path(path: str | None) -> bool:
+        value = (path or "").strip().replace("\\", "/")
+        upper = value.upper()
+        return bool(value.startswith("__") or upper.startswith("REQUEST_") or upper.endswith("_CONTEXT__"))
 
     def _infer_preview_port(files: list[dict], command: str | None = None) -> int:
         command = command or ""
@@ -1255,7 +1465,337 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         stdout = getattr(artifacts, "stdout", None) if artifacts else None
         stderr = getattr(artifacts, "stderr", None) if artifacts else None
         result = getattr(response, "result", None)
-        return "\n".join(str(part) for part in (stdout, stderr, result) if part)[:limit]
+        parts: list[str] = []
+        seen: set[str] = set()
+        for part in (stdout, stderr, result):
+            if not part:
+                continue
+            value = str(part)
+            if value in seen:
+                continue
+            seen.add(value)
+            parts.append(value)
+        return "\n".join(parts)[:limit]
+
+    def _codex_agent_package_json() -> str:
+        return (CODEX_AGENT_SOURCE_DIR / "package.json").read_text(encoding="utf-8")
+
+    def _codex_agent_index_mjs() -> str:
+        return (CODEX_AGENT_SOURCE_DIR / "index.mjs").read_text(encoding="utf-8")
+
+    def _codex_developer_instructions(root: str, preview_pattern: str | None = None) -> str:
+        preview_note = (
+            f"When you run a web server, bind to 0.0.0.0 and tell the user it is available through {preview_pattern}."
+            if preview_pattern else
+            "When you run a web server, bind to 0.0.0.0 so AREVEI can create a Daytona preview link."
+        )
+        return " ".join([
+            "You are running as the AREVEI coding agent inside a Daytona sandbox.",
+            f"Use {root} as the repository workspace root for all file and terminal work.",
+            "Inspect the existing project before editing and preserve its framework, routing, styling, naming, and conventions.",
+            preview_note,
+            "Make real file edits in the repository; do not return full-file JSON patches.",
+            "Use git status and project build/test commands when they help verify the change.",
+            "Keep final responses concise and mention changed files, commands run, and any remaining risk.",
+        ])
+
+    def _daytona_write_codex_config(sandbox: Any, runtime: dict):
+        root = _remote_workspace_root(runtime)
+        config_dir = posixpath.join(root, ".codex")
+        preview_pattern = None
+        if runtime.get("preview_url"):
+            preview_pattern = runtime.get("preview_url")
+        config = f"developer_instructions = {json.dumps(_codex_developer_instructions(root, preview_pattern))}\n"
+        _daytona_exec(sandbox, f"mkdir -p {shlex.quote(config_dir)}", timeout=60)
+        sandbox.fs.upload_file(config.encode("utf-8"), posixpath.join(config_dir, "config.toml"))
+
+    def _daytona_install_codex_agent(sandbox: Any):
+        _daytona_exec(sandbox, f"mkdir -p {shlex.quote(CODEX_AGENT_DIR)}", timeout=60)
+        sandbox.fs.upload_file(_codex_agent_package_json().encode("utf-8"), f"{CODEX_AGENT_DIR}/package.json")
+        sandbox.fs.upload_file(_codex_agent_index_mjs().encode("utf-8"), f"{CODEX_AGENT_DIR}/index.mjs")
+        node_response = _daytona_exec(sandbox, "node --version", timeout=30)
+        node_exit = getattr(node_response, "exit_code", None)
+        if node_exit not in (0, None):
+            raise RuntimeError(f"Node.js 18+ is required in the Daytona sandbox: {_daytona_exec_output(node_response, 1200)}")
+        response = _daytona_exec(
+            sandbox,
+            "if [ ! -d node_modules/@openai/codex-sdk ]; then npm install --silent; else echo 'Codex SDK dependencies already installed.'; fi",
+            cwd=CODEX_AGENT_DIR,
+            timeout=900,
+        )
+        exit_code = getattr(response, "exit_code", None)
+        if exit_code not in (0, None):
+            raise RuntimeError(f"Codex SDK dependency install failed: {_daytona_exec_output(response, 4000)}")
+        import_response = _daytona_exec(
+            sandbox,
+            "node -e \"import('@openai/codex-sdk').then(() => console.log('Codex SDK ready'))\"",
+            cwd=CODEX_AGENT_DIR,
+            timeout=60,
+        )
+        import_exit = getattr(import_response, "exit_code", None)
+        if import_exit not in (0, None):
+            raise RuntimeError(f"Codex SDK package is unavailable: {_daytona_exec_output(import_response, 2000)}")
+
+    def _daytona_prepare_codex_agent(runtime: dict) -> dict:
+        sandbox = _daytona_workspace_sandbox(runtime)
+        _daytona_write_codex_config(sandbox, runtime)
+        _daytona_install_codex_agent(sandbox)
+        return {"ok": True, "agent_dir": CODEX_AGENT_DIR}
+
+    def _codex_agent_env_path(runtime: dict) -> str:
+        workspace_id = str(runtime.get("workspace_id") or "workspace")
+        safe = re.sub(r"[^a-zA-Z0-9_.-]", "_", workspace_id)
+        return f"{CODEX_AGENT_DIR}/env-{safe}.sh"
+
+    def _daytona_write_codex_env(sandbox: Any, runtime: dict, prompt: str, model: str | None, effort: str | None = None) -> str | None:
+        api_key = _codex_agent_api_key()
+        if not api_key and not _codex_use_existing_sandbox_auth():
+            raise RuntimeError("Set SANDBOX_OPENAI_API_KEY, CODEX_API_KEY, OPENAI_API_KEY, or WORKSPACE_CODEX_USE_SANDBOX_ENV=true to run the Codex SDK agent.")
+        env = {
+            "PROMPT": prompt,
+            "WORKSPACE_ROOT": _remote_workspace_root(runtime),
+            "WORKSPACE_ID": runtime.get("workspace_id") or "workspace",
+            "CODEX_MODEL": model or os.environ.get("OPENAI_CODING_MODEL") or os.environ.get("OPENAI_MODEL", ""),
+            "CODEX_EFFORT": effort or "medium",
+            "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL", ""),
+        }
+        if api_key:
+            env["OPENAI_API_KEY"] = api_key
+            env["CODEX_API_KEY"] = api_key
+        lines = [
+            "#!/bin/sh",
+            "# Generated by AREVEI for one Codex SDK agent turn.",
+            *[f"export {key}={shlex.quote(str(value))}" for key, value in env.items() if value is not None],
+        ]
+        env_path = _codex_agent_env_path(runtime)
+        sandbox.fs.upload_file(("\n".join(lines) + "\n").encode("utf-8"), env_path)
+        _daytona_exec(sandbox, f"chmod 600 {shlex.quote(env_path)}", timeout=30)
+        return env_path
+
+    def _codex_agent_command(runtime: dict) -> str:
+        env_path = _codex_agent_env_path(runtime)
+        return f"set -a; . {shlex.quote(env_path)}; set +a; node {shlex.quote(CODEX_AGENT_DIR + '/index.mjs')}"
+
+    def _daytona_run_codex_agent(runtime: dict, prompt: str, model: str | None, on_event=None, effort: str | None = None) -> dict:
+        sandbox = _daytona_workspace_sandbox(runtime)
+        _daytona_write_codex_config(sandbox, runtime)
+        _daytona_install_codex_agent(sandbox)
+        _daytona_write_codex_env(sandbox, runtime, prompt, model, effort)
+        response = _daytona_exec(
+            sandbox,
+            _codex_agent_command(runtime),
+            cwd=_remote_workspace_root(runtime),
+            timeout=_codex_agent_timeout_seconds(),
+        )
+        output = _daytona_exec_output(response, 500_000)
+        events: list[dict] = []
+        codex_events: list[dict] = []
+        final_response = ""
+        usage = None
+        thread_id = None
+        for raw in output.splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                item = json.loads(raw)
+            except json.JSONDecodeError:
+                events.append(_agent_event("terminal_output", raw[:700], name="codex"))
+                continue
+            if item.get("type") == "agent_event":
+                event = item.get("event") or {}
+                message = event.get("message") or "Codex event."
+                mapped = _stream_event(
+                    _map_codex_event_type(event.get("kind") or event.get("item_type")),
+                    message,
+                    name=event.get("item_type") or event.get("kind"),
+                )
+                events.append(mapped)
+                if on_event:
+                    on_event(mapped)
+            elif item.get("type") == "codex_event":
+                codex_events.append(item.get("event") or {})
+            elif item.get("type") == "result":
+                final_response = item.get("finalResponse") or ""
+                usage = item.get("usage")
+                thread_id = item.get("threadId")
+            elif item.get("type") == "error":
+                raise RuntimeError(item.get("detail") or "Codex agent failed")
+        exit_code = getattr(response, "exit_code", None)
+        if exit_code not in (0, None):
+            raise RuntimeError(f"Codex agent failed with exit code {exit_code}: {output[-4000:]}")
+        return {
+            "assistant_message": final_response or "Codex completed the workspace task.",
+            "events": events,
+            "codex_events": codex_events[-200:],
+            "usage": usage,
+            "thread_id": thread_id,
+        }
+
+    async def _daytona_stream_codex_agent(runtime: dict, prompt: str, model: str | None, effort: str | None = None):
+        sandbox = _daytona_workspace_sandbox(runtime)
+        _daytona_write_codex_config(sandbox, runtime)
+        _daytona_install_codex_agent(sandbox)
+        _daytona_write_codex_env(sandbox, runtime, prompt, model, effort)
+        try:
+            from daytona import SessionExecuteRequest
+        except ImportError as exc:
+            raise RuntimeError("Daytona SDK SessionExecuteRequest is unavailable.") from exc
+
+        session_id = f"arevei-codex-{new_id()[:12]}"
+        command = _codex_agent_command(runtime)
+        sandbox.process.create_session(session_id, request_timeout=30)
+        response = sandbox.process.execute_session_command(
+            session_id,
+            SessionExecuteRequest(command=command, run_async=True, suppress_input_echo=True),
+            timeout=30,
+        )
+        command_id = getattr(response, "cmd_id", None)
+        if not command_id:
+            raise RuntimeError("Daytona did not return a command id for the Codex agent session.")
+
+        queue: asyncio.Queue[dict | None] = asyncio.Queue()
+        stdout_buffer = ""
+        stderr_buffer = ""
+        final: dict[str, Any] = {
+            "assistant_message": "",
+            "events": [],
+            "codex_events": [],
+            "usage": None,
+            "thread_id": None,
+            "stdout": "",
+            "stderr": "",
+            "session_id": session_id,
+            "command_id": command_id,
+        }
+
+        async def emit(data: dict):
+            await queue.put(data)
+
+        async def handle_stdout(chunk: str):
+            nonlocal stdout_buffer
+            final["stdout"] += chunk
+            stdout_buffer += chunk
+            lines = stdout_buffer.splitlines(keepends=True)
+            stdout_buffer = ""
+            if lines and not lines[-1].endswith(("\n", "\r")):
+                stdout_buffer = lines.pop()
+            for raw in lines:
+                text = raw.strip()
+                if text:
+                    await _handle_codex_stream_line(text, final, emit)
+
+        async def handle_stderr(chunk: str):
+            nonlocal stderr_buffer
+            final["stderr"] += chunk
+            stderr_buffer += chunk
+            if len(stderr_buffer) > 1200:
+                text = stderr_buffer.strip().splitlines()[0] if stderr_buffer.strip() else "Codex stderr output received."
+                event = _agent_event("tool_failed", text[:700], name="codex_stderr")
+                final["events"].append(event)
+                await emit({"type": "event", "event": event})
+                stderr_buffer = ""
+
+        async def consume_logs():
+            try:
+                await sandbox.process.get_session_command_logs_async(session_id, command_id, handle_stdout, handle_stderr)
+                if stdout_buffer.strip():
+                    await _handle_codex_stream_line(stdout_buffer.strip(), final, emit)
+                if stderr_buffer.strip():
+                    text = stderr_buffer.strip().splitlines()[0]
+                    event = _agent_event("tool_failed", text[:700], name="codex_stderr")
+                    final["events"].append(event)
+                    await emit({"type": "event", "event": event})
+                cmd = sandbox.process.get_session_command(session_id, command_id, request_timeout=30)
+                final["exit_code"] = getattr(cmd, "exit_code", None)
+                if final["exit_code"] not in (0, None):
+                    raise RuntimeError(f"Codex agent exited with code {final['exit_code']}.")
+            except Exception as exc:
+                await emit({"type": "error", "detail": str(exc)[:900]})
+            finally:
+                try:
+                    sandbox.process.delete_session(session_id, request_timeout=15)
+                except Exception:
+                    pass
+                await queue.put(None)
+
+        task = asyncio.create_task(consume_logs())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield item
+        finally:
+            if not task.done():
+                task.cancel()
+        yield {"type": "codex_final", "result": final}
+
+    async def _handle_codex_stream_line(line_text: str, final: dict, emit):
+        try:
+            item = json.loads(line_text)
+        except json.JSONDecodeError:
+            event = _stream_event("terminal_output", line_text[:900], name="codex")
+            final.setdefault("events", []).append(event)
+            await emit({"type": "event", "event": event})
+            return
+
+        if item.get("type") == "agent_event":
+            event = item.get("event") or {}
+            mapped = _stream_event(
+                _map_codex_event_type(event.get("kind") or event.get("item_type")),
+                event.get("message") or "Codex event.",
+                name=event.get("item_type") or event.get("kind"),
+            )
+            final.setdefault("events", []).append(mapped)
+            await emit({"type": "event", "event": mapped})
+        elif item.get("type") == "codex_event":
+            event = item.get("event") or {}
+            final.setdefault("codex_events", []).append(event)
+        elif item.get("type") == "delta":
+            text = item.get("text") or ""
+            if text:
+                await emit({"type": "delta", "text": text})
+        elif item.get("type") == "result":
+            final["assistant_message"] = item.get("finalResponse") or final.get("assistant_message") or ""
+            final["usage"] = item.get("usage")
+            final["thread_id"] = item.get("threadId")
+        elif item.get("type") == "error":
+            await emit({"type": "error", "detail": item.get("detail") or "Codex agent failed"})
+
+    class CodexDaytonaAgentRunner:
+        def __init__(self, runtime: dict, model: str | None):
+            self.runtime = runtime
+            self.model = model
+
+        @property
+        def available(self) -> bool:
+            return bool(
+                _codex_agent_enabled()
+                and self.runtime
+                and self.runtime.get("provider") == "daytona"
+                and self.runtime.get("capabilities", {}).get("commands")
+                and self.runtime.get("provider_runtime_id")
+            )
+
+        def prepare(self) -> dict:
+            return _daytona_prepare_codex_agent(self.runtime)
+
+        async def stream(self, prompt: str, effort: str | None = None):
+            async for item in _daytona_stream_codex_agent(self.runtime, prompt, self.model, effort):
+                yield item
+
+    def _map_codex_event_type(kind: str | None) -> str:
+        value = (kind or "").lower()
+        if "command" in value:
+            return "tool_finished"
+        if "file" in value:
+            return "file_edit_finished"
+        if "agent_message" in value:
+            return "message_delta"
+        if "started" in value:
+            return "agent_started"
+        return "tool_finished"
 
     def _daytona_dev_log(sandbox: Any) -> str:
         try:
@@ -1585,12 +2125,34 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             upsert=True,
         )
 
+    async def _ensure_tree_file(workspace: dict, path: str):
+        path = _clean_workspace_path(path)
+        if any(item.get("path") == path for item in workspace.get("tree", [])):
+            return
+        await _add_tree_entry(workspace, path, "file")
+        workspace.setdefault("tree", []).append({
+            "path": path,
+            "type": "blob",
+            "size": 0,
+            "language": _language_for_path(path),
+        })
+
     async def _set_workspace_tree(workspace_id: str, tree: list[dict]):
+        tree = [item for item in tree if not _is_pseudo_agent_path(item.get("path"))]
         tree = sorted(tree, key=lambda item: (item.get("type") != "tree", item.get("path", "")))
         await db.workspace_sessions.update_one(
             {"id": workspace_id},
             {"$set": {"tree": tree[:MAX_TREE_FILES], "index": _manifest_summary([item["path"] for item in tree if item.get("type") == "blob"]), "updated_at": now_iso()}},
         )
+
+    async def _cleanup_pseudo_workspace_paths(workspace: dict) -> dict:
+        bad_paths = [item.get("path") for item in workspace.get("tree", []) if _is_pseudo_agent_path(item.get("path"))]
+        if bad_paths:
+            await db.workspace_files.delete_many({"workspace_id": workspace["id"], "path": {"$in": bad_paths}})
+            tree = [item for item in workspace.get("tree", []) if item.get("path") not in bad_paths]
+            await _set_workspace_tree(workspace["id"], tree)
+            workspace = {**workspace, "tree": tree}
+        return workspace
 
     async def _add_tree_entry(workspace: dict, path: str, item_type: str):
         path = _clean_workspace_path(path)
@@ -1645,10 +2207,18 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
     async def _build_ai_proposal(workspace: dict, message: str, context_files: list[dict] | None = None, model: str | None = None) -> tuple[str, list[dict]]:
         files = context_files if context_files is not None else await _active_files(workspace["id"])
         by_path = {f["path"]: f for f in files}
+        paths = [f["path"] for f in files]
         lower = message.lower()
         diffs: list[dict] = []
 
         openai_result = await _openai_code_proposal(message, files, model)
+        if not openai_result and context_files is not None:
+            cached_files = await _active_files(workspace["id"])
+            cached_paths = {f["path"] for f in cached_files}
+            merged = [*files]
+            merged.extend(f for f in cached_files if f["path"] not in {item["path"] for item in merged})
+            if len(cached_paths) > len({f["path"] for f in files}):
+                openai_result = await _openai_code_proposal(message, merged, model)
         if openai_result:
             return openai_result
 
@@ -1660,18 +2230,10 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
 
         wants_ui = any(word in lower for word in ("create", "new", "feature", "landing", "dashboard", "component", "page", "ui", "website", "design"))
         if wants_ui or not files:
-            app_path = "src/App.jsx" if "src/App.jsx" in by_path or "src/App.js" not in by_path else "src/App.js"
-            css_path = "src/index.css"
-            readme_path = "README.md"
-            app_old = by_path.get(app_path, {}).get("content", "")
-            css_old = by_path.get(css_path, {}).get("content", "")
-            readme_old = by_path.get(readme_path, {}).get("content", "")
-            diffs.append(_make_diff(app_path, app_old, _replace_app_for_feature(message)))
-            diffs.append(_make_diff(css_path, css_old, _feature_css()))
-            if "readme" in lower or "document" in lower or "full" in lower:
-                readme_new = readme_old.rstrip() + f"\n\n## AI change\n\nImplemented a multi-file UI update for: {message}\n"
-                diffs.append(_make_diff(readme_path, readme_old, readme_new))
-            return f"I prepared a multi-file website change across {len(diffs)} files. Review the diffs, accept them, then open Preview.", diffs
+            return (
+                "A coding model is required for broad UI/app edits so I can preserve this project design instead of using a template. Configure OPENAI_API_KEY and OPENAI_CODING_MODEL.",
+                [],
+            )
 
         if "readme" in lower:
             target_path = "README.md"
@@ -1689,8 +2251,8 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             return f"{target_path} has {len(current.splitlines())} lines. I can propose edits when you ask for a concrete change.", []
         else:
             new = current.rstrip() + f"\n\n// AI implementation note: {message[:220].replace(chr(10), ' ')}\n"
-        diffs.append(_make_diff(target_path, current, new))
-        return f"I prepared a safe proposal touching {target_path}.", diffs
+        diffs.append(_make_normalized_diff(target_path, current, new))
+        return f"I applied a focused edit touching {target_path}.", diffs
 
     async def _run_agent_runtime_intent(workspace: dict, message: str, user: dict) -> str | None:
         lower = message.lower()
@@ -1724,7 +2286,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         }
         if result.get("preview_url"):
             updates["direct_preview_url"] = result["preview_url"]
-            updates["preview_proxy_url"] = _preview_proxy_base_url(workspace_id)
+            updates["preview_proxy_url"] = _preview_proxy_base_url(workspace["id"])
             updates["preview_url"] = updates["preview_proxy_url"] or result["preview_url"]
             updates["preview_port"] = result.get("preview_port")
         await db.runtime_sessions.update_one({"id": runtime["id"]}, {"$set": updates})
@@ -2460,9 +3022,16 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
     @r.get("/runtime/providers")
     async def runtime_providers(user=Depends(current_user)):
         await _tenant_id(user)
+        configured_model = _coding_model_from_payload(None)
         return {
             "active": _runtime_provider(),
             "recommended": "daytona",
+            "coding_ai": {
+                "configured": bool(os.environ.get("OPENAI_API_KEY")),
+                "model": configured_model,
+                "model_env": "OPENAI_CODING_MODEL" if os.environ.get("OPENAI_CODING_MODEL") else "OPENAI_MODEL" if os.environ.get("OPENAI_MODEL") else "default",
+                "required_env": ["OPENAI_API_KEY", "OPENAI_CODING_MODEL"],
+            },
             "architecture": "AREVEI controls auth, AI, review, commit, billing, memory, and deployment. The runtime provider supplies the isolated persistent filesystem, terminal commands, snapshots, dependency install, and live preview.",
             "preview_proxy": {
                 "mode": "subdomain" if (os.environ.get("PREVIEW_BASE_DOMAIN") or os.environ.get("WORKSPACE_PREVIEW_DOMAIN")) else "path",
@@ -2470,6 +3039,50 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 "requires": "Route wildcard preview hosts to /api/workspaces/{workspace_id}/runtime/preview-proxy and preserve WebSocket upgrades.",
             },
         }
+
+    @r.get("/workspaces/{workspace_id}/ai/config")
+    async def workspace_ai_config(workspace_id: str, user=Depends(current_user)):
+        await _workspace(workspace_id, user)
+        return {
+            "openai_api_key_present": bool(os.environ.get("OPENAI_API_KEY")),
+            "openai_api_key_prefix": (os.environ.get("OPENAI_API_KEY") or "")[:7] if os.environ.get("OPENAI_API_KEY") else None,
+            "coding_model": _coding_model_from_payload(None),
+            "openai_coding_model": os.environ.get("OPENAI_CODING_MODEL"),
+            "openai_model": os.environ.get("OPENAI_MODEL"),
+        }
+
+    async def _prepare_codex_agent_for_runtime(runtime: dict) -> dict:
+        if not (
+            _codex_agent_enabled()
+            and runtime.get("provider") == "daytona"
+            and runtime.get("capabilities", {}).get("commands")
+            and runtime.get("provider_runtime_id")
+            and runtime.get("status") == "ready"
+        ):
+            return runtime
+        try:
+            CodexDaytonaAgentRunner(runtime, _coding_model_from_payload(None)).prepare()
+            updates = {
+                "codex_agent_enabled": True,
+                "codex_agent_status": "ready",
+                "codex_agent_dir": CODEX_AGENT_DIR,
+                "codex_model": _coding_model_from_payload(None),
+                "updated_at": now_iso(),
+            }
+            await db.runtime_sessions.update_one({"id": runtime["id"]}, {"$set": updates})
+            await _append_runtime_log(runtime["id"], "Codex SDK agent is installed in the Daytona sandbox.")
+            runtime.update(updates)
+        except Exception as exc:
+            updates = {
+                "codex_agent_enabled": True,
+                "codex_agent_status": "setup_error",
+                "codex_agent_error": str(exc)[:700],
+                "updated_at": now_iso(),
+            }
+            await db.runtime_sessions.update_one({"id": runtime["id"]}, {"$set": updates})
+            await _append_runtime_log(runtime["id"], f"Codex SDK agent setup failed: {str(exc)[:500]}", "error")
+            runtime.update(updates)
+        return runtime
 
     @r.post("/workspaces/{workspace_id}/runtime/start")
     async def start_workspace_runtime(workspace_id: str, payload: dict, user=Depends(current_user)):
@@ -2584,6 +3197,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                     await _append_runtime_log(existing["id"], updates["note"], "error")
             await db.runtime_sessions.update_one({"id": existing["id"]}, {"$set": updates})
             existing.update(updates)
+            existing = await _prepare_codex_agent_for_runtime(existing)
             return existing
 
         runtime = {
@@ -2676,6 +3290,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             await _append_runtime_log(runtime["id"], f"Loaded {loaded_bootstrap} missing startup file(s) from GitHub before sync.")
         if runtime.get("status") == "bridge_error":
             await _append_runtime_log(runtime["id"], runtime["note"], "error")
+        runtime = await _prepare_codex_agent_for_runtime(runtime)
         runtime.pop("_id", None)
         return runtime
 
@@ -2956,6 +3571,49 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         command = (payload.get("command") or "").strip()
         if not command:
             raise HTTPException(400, "Command is required")
+        approval_id = payload.get("approval_id")
+        if approval_id:
+            approval = await db.workspace_command_approvals.find_one(
+                {"id": approval_id, "workspace_id": workspace_id, "tenant_id": user["tenant_id"]},
+                {"_id": 0},
+            )
+            if not approval or approval.get("command") != command:
+                raise HTTPException(403, "Command approval does not match this command")
+            if approval.get("status") != "allowed":
+                raise HTTPException(403, "Command was not approved")
+            await db.workspace_command_approvals.update_one(
+                {"id": approval_id},
+                {"$set": {"status": "used", "used_at": now_iso()}},
+            )
+        else:
+            approval = {
+                "id": new_id(),
+                "tenant_id": user["tenant_id"],
+                "workspace_id": workspace_id,
+                "project_id": workspace.get("project_id"),
+                "chat_id": workspace.get("chat_id"),
+                "user_id": user["user_id"],
+                "command": command,
+                "cwd": runtime.get("root_path"),
+                "reason": payload.get("reason") or "Terminal command requested from AI Workspace.",
+                "risk": _approval_risk(command),
+                "status": "pending",
+                "created_at": now_iso(),
+            }
+            await db.workspace_command_approvals.insert_one(approval)
+            approval.pop("_id", None)
+            return {
+                "ok": False,
+                "status": "approval_required",
+                "approval": approval,
+                "event": _stream_event(
+                    "command_approval_required",
+                    f"Approve terminal command: {command}",
+                    approval=approval,
+                    command=command,
+                    risk=approval["risk"],
+                ),
+            }
         await _append_workspace_activity(workspace, f"Running terminal command: `{command}`.")
         if not runtime.get("capabilities", {}).get("commands"):
             msg = (
@@ -3058,6 +3716,10 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         if not message:
             raise HTTPException(400, "Message is required")
         selected_model = _coding_model_from_payload(payload.get("model"))
+        events: list[dict] = [
+            _agent_event("agent_started", "Analyzing workspace request."),
+            _agent_event("tool_started", "Reading workspace context.", name="list_files"),
+        ]
         user_message = {
             "id": new_id(),
             "tenant_id": user["tenant_id"],
@@ -3071,59 +3733,121 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "created_at": now_iso(),
         }
         await db.workspace_chat_messages.insert_one(user_message)
+        runtime = await _runtime_session(workspace_id, user)
+        runtime = await _upgrade_runtime_to_current_provider(runtime, workspace_id) if runtime else None
+        runner = CodexDaytonaAgentRunner(runtime, selected_model) if runtime else None
+        if not runner or not runner.available:
+            provider = runtime.get("provider") if runtime else "none"
+            setup_hint = (
+                runtime.get("setup_hint")
+                if runtime
+                else "Start a Daytona runtime before sending project coding prompts."
+            )
+            raise HTTPException(
+                409,
+                (
+                    "AI Workspace project chat requires the Daytona Codex SDK runtime. "
+                    f"Current runtime provider is `{provider}`. "
+                    "Set DAYTONA_API_KEY, WORKSPACE_RUNTIME_BRIDGE_ENABLED=true, "
+                    "WORKSPACE_CODEX_AGENT_ENABLED=true, and SANDBOX_OPENAI_API_KEY "
+                    "or WORKSPACE_CODEX_USE_SANDBOX_ENV=true. "
+                    f"{setup_hint or ''}"
+                ).strip(),
+            )
+        repo = await _repo(workspace["repo_id"], user)
+        repo_token = await _installation_token(repo["installation_id"]) if repo.get("provider") == "github" else None
+        files = await _active_files(workspace_id)
+        _daytona_sync_files(runtime, files, repo=repo, token=repo_token)
+        await _append_workspace_activity(workspace, "Running Codex SDK agent inside Daytona.")
+        codex_result = _daytona_run_codex_agent(runtime, message, selected_model)
+        return await _finalize_codex_daytona_turn(
+            workspace,
+            runtime,
+            user,
+            message,
+            selected_model,
+            user_message,
+            codex_result,
+            [
+                _agent_event("agent_started", "Starting Daytona Codex workflow."),
+                _agent_event("tool_finished", "Workspace files are synced in Daytona.", name="daytona_sync"),
+                *codex_result.get("events", []),
+            ],
+        )
         await _append_workspace_activity(
             workspace,
-            "Reading workspace files, project index, and previous chat context before proposing code edits.",
+            "Reading workspace files, project index, and previous chat context before applying code edits.",
         )
-        runtime_output = await _run_agent_runtime_intent(workspace, message, user)
+        events.append(_agent_event("tool_finished", "Workspace context loaded.", name="list_files"))
         edit_words = ("edit", "change", "create", "update", "fix", "build", "add", "remove", "design", "page", "component")
-        if runtime_output and not any(word in message.lower() for word in edit_words):
-            assistant_doc = {
-                "id": new_id(),
-                "tenant_id": user["tenant_id"],
-                "workspace_id": workspace_id,
-                "project_id": workspace.get("project_id"),
-                "chat_id": workspace.get("chat_id"),
-                "repo_id": workspace["repo_id"],
-                "user_id": user["user_id"],
-                "role": "assistant",
-                "content": runtime_output,
-                "changed_files": [],
-                "created_at": now_iso(),
-            }
-            await db.workspace_chat_messages.insert_one(assistant_doc)
-            return {
-                "id": new_id(),
-                "tenant_id": user["tenant_id"],
-                "workspace_id": workspace_id,
-                "prompt": message,
-                "assistant_message": runtime_output,
-                "changes": [],
-                "status": "command_completed",
-                "messages": [
-                    {k: v for k, v in user_message.items() if k != "_id"},
-                    {k: v for k, v in assistant_doc.items() if k != "_id"},
-                ],
-            }
+        is_edit_request = any(word in message.lower() for word in edit_words)
+        if not is_edit_request:
+            runtime_output = await _run_agent_runtime_intent(workspace, message, user)
+            if runtime_output:
+                events.extend([
+                    _agent_event("tool_finished", "Runtime command finished.", name="run_terminal"),
+                    _agent_event("agent_finished", "Done."),
+                ])
+                assistant_doc = {
+                    "id": new_id(),
+                    "tenant_id": user["tenant_id"],
+                    "workspace_id": workspace_id,
+                    "project_id": workspace.get("project_id"),
+                    "chat_id": workspace.get("chat_id"),
+                    "repo_id": workspace["repo_id"],
+                    "user_id": user["user_id"],
+                    "role": "assistant",
+                    "content": runtime_output,
+                    "changed_files": [],
+                    "created_at": now_iso(),
+                }
+                await db.workspace_chat_messages.insert_one(assistant_doc)
+                return {
+                    "id": new_id(),
+                    "tenant_id": user["tenant_id"],
+                    "workspace_id": workspace_id,
+                    "prompt": message,
+                    "assistant_message": runtime_output,
+                    "changes": [],
+                    "status": "command_completed",
+                    "events": events,
+                    "messages": [
+                        {k: v for k, v in user_message.items() if k != "_id"},
+                        {k: v for k, v in assistant_doc.items() if k != "_id"},
+                    ],
+                }
         runtime = await _runtime_session(workspace_id, user)
         context_files = None
         if runtime and runtime.get("provider") == "daytona" and runtime.get("capabilities", {}).get("filesystem"):
+            events.append(_agent_event("tool_started", "Reading files from Daytona.", name="read_file"))
             context_files = _daytona_context_files(runtime, message, workspace.get("tree", []))
-        assistant_message, diffs = await _build_ai_proposal(workspace, message, context_files, selected_model)
+            events.append(_agent_event("tool_finished", f"Loaded {len(context_files)} context file(s).", name="read_file"))
+        else:
+            events.append(_agent_event("tool_finished", "Loaded cached workspace files.", name="read_file"))
+        events.append(_agent_event("tool_started", "Generating code edits.", name="generate_diff"))
+        try:
+            assistant_message, diffs = await _build_ai_proposal(workspace, message, context_files, selected_model)
+        except RuntimeError as exc:
+            assistant_message = str(exc)[:700]
+            diffs = []
+            events.append(_agent_event("tool_failed", assistant_message, name="generate_diff"))
+        events.append(_agent_event("tool_finished", f"Generated {len(diffs)} file edit(s).", name="generate_diff"))
         sandbox_patch = None
         sandbox_changed_files: list[dict] = []
         if diffs and runtime and runtime.get("provider") == "daytona" and runtime.get("capabilities", {}).get("filesystem"):
             touched_paths = [_clean_workspace_path(item["path"]) for item in diffs if item.get("path")]
             try:
                 for item in diffs:
-                    _daytona_write_workspace_file(runtime, item["path"], item.get("new", ""))
+                    clean_path = _clean_workspace_path(item["path"])
+                    events.append(_agent_event("file_edit_started", f"Editing {clean_path}.", path=clean_path))
+                    _daytona_write_workspace_file(runtime, clean_path, item.get("new", ""))
                     await db.workspace_files.update_one(
-                        {"workspace_id": workspace_id, "path": _clean_workspace_path(item["path"])},
+                        {"workspace_id": workspace_id, "path": clean_path},
                         {"$set": {
                             "workspace_id": workspace_id,
-                            "path": _clean_workspace_path(item["path"]),
+                            "path": clean_path,
                             "content": item.get("new", ""),
-                            "language": _language_for_path(item["path"]),
+                            "language": _language_for_path(clean_path),
                             "source": "sandbox_cache",
                             "updated_at": now_iso(),
                         }, "$setOnInsert": {
@@ -3133,6 +3857,8 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                         }},
                         upsert=True,
                     )
+                    await _ensure_tree_file(workspace, clean_path)
+                    events.append(_agent_event("file_edit_finished", f"Saved {clean_path}.", path=clean_path))
                 sandbox_patch = _daytona_git_diff(runtime, touched_paths)
                 sandbox_changed_files = _daytona_git_status(runtime, touched_paths)
                 if sandbox_patch:
@@ -3140,18 +3866,50 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                         item["sandbox_applied"] = True
                         item["patch_source"] = "git"
             except Exception as exc:
-                await _append_workspace_activity(workspace, f"Sandbox edit failed before review: {str(exc)[:240]}")
+                await _append_workspace_activity(workspace, f"Sandbox edit failed: {str(exc)[:240]}")
                 raise HTTPException(500, f"Sandbox edit failed: {str(exc)[:240]}")
+        elif diffs:
+            for item in diffs:
+                clean_path = _clean_workspace_path(item["path"])
+                events.append(_agent_event("file_edit_started", f"Editing {clean_path}.", path=clean_path))
+                existing = await _workspace_file(workspace_id, clean_path)
+                original = existing.get("original_content") if existing else item.get("old", "")
+                await _upsert_workspace_file(workspace_id, clean_path, item.get("new", ""), original)
+                await _ensure_tree_file(workspace, clean_path)
+                events.append(_agent_event("file_edit_finished", f"Saved {clean_path}.", path=clean_path))
         if diffs:
             await _append_workspace_activity(
                 workspace,
-                f"Prepared {len(diffs)} editable file change(s): {', '.join([item.get('path', '') for item in diffs[:6]])}. Waiting for Accept or Reject.",
+                f"Applied {len(diffs)} file edit(s): {', '.join([item.get('path', '') for item in diffs[:6]])}. Review the git diff, then commit or revert.",
             )
         else:
-            await _append_workspace_activity(workspace, "No file edits were proposed for this request.")
+            await _append_workspace_activity(workspace, "No file edits were needed for this request.")
+        knowledge = None
+        if diffs:
+            events.append(_agent_event("tool_started", "Refreshing workspace index.", name="semantic_index"))
+            knowledge = await _refresh_workspace_knowledge(workspace_id)
+            await db.workspace_knowledge.update_one(
+                {"workspace_id": workspace_id},
+                {"$set": {"memory.last_task": assistant_message, "updated_at": knowledge["updated_at"]}},
+            )
+            events.append(_agent_event("tool_finished", "Workspace index refreshed.", name="semantic_index"))
+        if runtime and diffs and runtime.get("provider") == "daytona" and runtime.get("capabilities", {}).get("commands"):
+            events.append(_agent_event("git_changed", f"Git reports {len(sandbox_changed_files)} changed file(s).", files=sandbox_changed_files))
         knowledge = await db.workspace_knowledge.find_one(
             {"workspace_id": workspace_id, "tenant_id": user.get("tenant_id")}, {"_id": 0}
         )
+        files_changed = sandbox_changed_files or [
+            {"path": item.get("path"), "language": _language_for_path(item.get("path", "")), "status": "M"}
+            for item in diffs
+        ]
+        active_path = next((item.get("path") for item in files_changed if item.get("path")), None)
+        if active_path:
+            await db.workspace_sessions.update_one(
+                {"id": workspace_id},
+                {"$set": {"active_file_path": active_path, "updated_at": now_iso()}},
+            )
+            events.append(_agent_event("open_file", f"Opening {active_path}.", path=active_path))
+        events.append(_agent_event("agent_finished", "Done. Changes are in the workspace; commit or revert from Git controls."))
         change = {
             "id": new_id(),
             "tenant_id": user["tenant_id"],
@@ -3164,13 +3922,15 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "assistant_message": assistant_message,
             "model": selected_model,
             "changes": diffs,
-            "files_changed": sandbox_changed_files or [{"path": item.get("path"), "language": _language_for_path(item.get("path", ""))} for item in diffs],
+            "files_changed": files_changed,
             "patch": sandbox_patch,
+            "events": events,
             "knowledge_snapshot": {
                 "summary": knowledge.get("memory", {}).get("summary") if knowledge else None,
                 "updated_at": knowledge.get("updated_at") if knowledge else None,
             },
-            "status": "proposed",
+            "status": "applied" if diffs else "no_changes",
+            "applied_at": now_iso() if diffs else None,
             "created_at": now_iso(),
             "updated_at": now_iso(),
         }
@@ -3188,6 +3948,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "change_set_id": change["id"],
             "model": selected_model,
             "changed_files": [c.get("path") for c in diffs],
+            "events": events,
             "created_at": now_iso(),
         }
         await db.workspace_chat_messages.insert_one(assistant_doc)
@@ -3198,6 +3959,305 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         ]
         return change
 
+    async def _finalize_codex_daytona_turn(
+        workspace: dict,
+        runtime: dict,
+        user: dict,
+        message: str,
+        model: str,
+        user_message: dict,
+        codex_result: dict,
+        streamed_events: list[dict],
+        attachments: list[dict] | None = None,
+        plan_markdown: str = "",
+        effort: str = "medium",
+    ) -> dict:
+        workspace_id = workspace["id"]
+        changed_files = _daytona_git_status(runtime)
+        diffs: list[dict] = []
+        for changed in changed_files[:80]:
+            path = changed.get("path")
+            if not path or _is_pseudo_agent_path(path):
+                continue
+            clean_path = _clean_workspace_path(path)
+            existing = await _workspace_file(workspace_id, clean_path)
+            old = _dedupe_repeated_text(existing.get("content", "")) if existing else ""
+            if "D" in (changed.get("status") or ""):
+                await db.workspace_files.delete_one({"workspace_id": workspace_id, "path": clean_path})
+                try:
+                    await _remove_tree_entries(workspace, clean_path)
+                except Exception:
+                    pass
+                diffs.append(_make_normalized_diff(clean_path, old, ""))
+                continue
+            try:
+                doc = _daytona_read_workspace_file(runtime, clean_path)
+            except Exception:
+                continue
+            new_content = doc.get("content", "")
+            await db.workspace_files.update_one(
+                {"workspace_id": workspace_id, "path": clean_path},
+                {"$set": {
+                    "workspace_id": workspace_id,
+                    "path": clean_path,
+                    "content": new_content,
+                    "language": _language_for_path(clean_path),
+                    "source": "codex_sandbox",
+                    "updated_at": now_iso(),
+                }, "$setOnInsert": {
+                    "id": new_id(),
+                    "created_at": now_iso(),
+                    "original_content": old,
+                }},
+                upsert=True,
+            )
+            await _ensure_tree_file(workspace, clean_path)
+            if old != new_content:
+                diff = _make_normalized_diff(clean_path, old, new_content)
+                diff["sandbox_applied"] = True
+                diff["patch_source"] = "codex_sdk"
+                diffs.append(diff)
+
+        patch = _daytona_git_diff(runtime) if changed_files else ""
+        stdout_lines = codex_result.get("stdout", "").strip().splitlines()
+        assistant_message = codex_result.get("assistant_message") or (stdout_lines[-1] if stdout_lines else "") or "Codex completed the workspace task."
+        knowledge = None
+        if changed_files:
+            knowledge = await _refresh_workspace_knowledge(workspace_id)
+            await db.workspace_knowledge.update_one(
+                {"workspace_id": workspace_id},
+                {"$set": {"memory.last_task": assistant_message, "updated_at": knowledge["updated_at"]}},
+            )
+        else:
+            knowledge = await db.workspace_knowledge.find_one(
+                {"workspace_id": workspace_id, "tenant_id": user.get("tenant_id")}, {"_id": 0}
+            )
+
+        events = [*streamed_events]
+        if changed_files:
+            events.append(_stream_event("git_changed", f"Git reports {len(changed_files)} changed file(s).", files=changed_files))
+        active_path = next((item.get("path") for item in changed_files if item.get("path")), None)
+        if active_path:
+            await db.workspace_sessions.update_one(
+                {"id": workspace_id},
+                {"$set": {"active_file_path": active_path, "updated_at": now_iso()}},
+            )
+            events.append(_stream_event("open_file", f"Opening {active_path}.", path=active_path))
+        events.append(_stream_event("agent_finished", "Done. Codex changes are in the Daytona workspace; commit or revert from Git controls."))
+
+        thread_id = codex_result.get("thread_id")
+        if thread_id:
+            await db.project_chats.update_one(
+                {"id": workspace.get("chat_id"), "tenant_id": user["tenant_id"]},
+                {"$set": {"codex_thread_id": thread_id, "updated_at": now_iso()}},
+            )
+            await db.workspace_sessions.update_one(
+                {"id": workspace_id},
+                {"$set": {"codex_thread_id": thread_id, "updated_at": now_iso()}},
+            )
+        await db.runtime_sessions.update_one(
+            {"id": runtime["id"]},
+            {"$set": {
+                "last_command": "codex_sdk_agent",
+                "last_exit_code": codex_result.get("exit_code"),
+                "codex_thread_id": thread_id,
+                "updated_at": now_iso(),
+            }},
+        )
+
+        change = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "workspace_id": workspace_id,
+            "project_id": workspace.get("project_id"),
+            "chat_id": workspace.get("chat_id"),
+            "repo_id": workspace["repo_id"],
+            "user_id": user["user_id"],
+            "prompt": message,
+            "assistant_message": assistant_message,
+            "model": model,
+            "effort": effort,
+            "changes": diffs,
+            "files_changed": changed_files,
+            "attachments": attachments or [],
+            "plan_markdown": plan_markdown,
+            "patch": patch,
+            "events": events,
+            "codex_thread_id": thread_id,
+            "codex_usage": codex_result.get("usage"),
+            "preview_url": runtime.get("preview_url"),
+            "knowledge_snapshot": {
+                "summary": knowledge.get("memory", {}).get("summary") if knowledge else None,
+                "updated_at": knowledge.get("updated_at") if knowledge else None,
+            },
+            "status": "applied" if changed_files else "no_changes",
+            "applied_at": now_iso() if changed_files else None,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        await db.ai_change_sets.insert_one(change)
+        assistant_doc = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "workspace_id": workspace_id,
+            "project_id": workspace.get("project_id"),
+            "chat_id": workspace.get("chat_id"),
+            "repo_id": workspace["repo_id"],
+            "user_id": user["user_id"],
+            "role": "assistant",
+            "content": assistant_message,
+            "change_set_id": change["id"],
+            "model": model,
+            "effort": effort,
+            "changed_files": [c.get("path") for c in changed_files],
+            "attachments": attachments or [],
+            "plan_markdown": plan_markdown,
+            "codex_usage": codex_result.get("usage"),
+            "events": events,
+            "created_at": now_iso(),
+        }
+        await db.workspace_chat_messages.insert_one(assistant_doc)
+        await _append_workspace_activity(
+            workspace,
+            f"Codex SDK changed {len(changed_files)} file(s): {', '.join([item.get('path', '') for item in changed_files[:6]]) or 'none'}.",
+        )
+        change.pop("_id", None)
+        change["messages"] = [
+            {k: v for k, v in user_message.items() if k != "_id"},
+            {k: v for k, v in assistant_doc.items() if k != "_id"},
+        ]
+        return change
+
+    @r.post("/workspaces/{workspace_id}/ai/chat/stream")
+    async def workspace_ai_chat_stream(workspace_id: str, payload: dict, user=Depends(current_user)):
+        async def stream():
+            def line(data: dict) -> bytes:
+                return (json.dumps(data, default=str) + "\n").encode("utf-8")
+
+            started = _stream_event("agent_started", "Starting Daytona Codex workflow.")
+            yield line({"type": "event", "event": started})
+            await asyncio.sleep(0)
+            try:
+                workspace = await _workspace(workspace_id, user)
+                message = (payload.get("message") or "").strip()
+                if not message:
+                    yield line({"type": "error", "detail": "Message is required"})
+                    return
+                selected_model = _coding_model_from_payload(payload.get("model"))
+                effort = str(payload.get("effort") or "medium").lower()
+                if effort not in {"low", "medium", "high"}:
+                    effort = "medium"
+                attachment_ids = [str(item) for item in (payload.get("attachments") or []) if str(item).strip()]
+                attachments = await db.workspace_attachments.find(
+                    {"workspace_id": workspace_id, "tenant_id": user["tenant_id"], "id": {"$in": attachment_ids}},
+                    {"_id": 0},
+                ).to_list(20) if attachment_ids else []
+                plan_markdown = _plan_markdown(message, attachments) if payload.get("plan_mode") else ""
+                enriched_message = message
+                if plan_markdown:
+                    enriched_message += "\n\nUse this implementation plan before editing:\n" + plan_markdown
+                    plan_event = _stream_event("plan_created", "Implementation plan created.", plan_markdown=plan_markdown)
+                    yield line({"type": "event", "event": plan_event})
+                    yield line({"type": "plan", "markdown": plan_markdown})
+                enriched_message += _attachment_context(attachments)
+                runtime = await _runtime_session(workspace_id, user)
+                runtime = await _upgrade_runtime_to_current_provider(runtime, workspace_id) if runtime else None
+                runner = CodexDaytonaAgentRunner(runtime, selected_model) if runtime else None
+                if runner and runner.available:
+                    user_message = {
+                        "id": new_id(),
+                        "tenant_id": user["tenant_id"],
+                        "workspace_id": workspace_id,
+                        "project_id": workspace.get("project_id"),
+                        "chat_id": workspace.get("chat_id"),
+                        "repo_id": workspace["repo_id"],
+                        "user_id": user["user_id"],
+                        "role": "user",
+                        "content": message,
+                        "attachments": attachments,
+                        "plan_markdown": plan_markdown,
+                        "effort": effort,
+                        "created_at": now_iso(),
+                    }
+                    await db.workspace_chat_messages.insert_one(user_message)
+                    repo = await _repo(workspace["repo_id"], user)
+                    repo_token = await _installation_token(repo["installation_id"]) if repo.get("provider") == "github" else None
+                    files = await _active_files(workspace_id)
+                    sync_event = _stream_event("tool_started", "Syncing workspace files into Daytona.", name="daytona_sync")
+                    yield line({"type": "event", "event": sync_event})
+                    _daytona_sync_files(runtime, files, repo=repo, token=repo_token)
+                    sync_done = _stream_event("tool_finished", "Workspace files are synced in Daytona.", name="daytona_sync")
+                    yield line({"type": "event", "event": sync_done})
+                    await _append_workspace_activity(workspace, "Running Codex SDK agent inside Daytona.")
+                    streamed_events = [started, sync_event, sync_done]
+                    codex_final: dict | None = None
+                    async for item in runner.stream(enriched_message, effort):
+                        if item.get("type") == "event" and item.get("event"):
+                            streamed_events.append(item["event"])
+                        elif item.get("type") == "codex_final":
+                            codex_final = item.get("result") or {}
+                            continue
+                        yield line(item)
+                        if item.get("type") == "error":
+                            detail = item.get("detail") or "Codex SDK failed inside Daytona."
+                            assistant_doc = {
+                                "id": new_id(),
+                                "tenant_id": user["tenant_id"],
+                                "workspace_id": workspace_id,
+                                "project_id": workspace.get("project_id"),
+                                "chat_id": workspace.get("chat_id"),
+                                "repo_id": workspace["repo_id"],
+                                "user_id": user["user_id"],
+                                "role": "assistant",
+                                "content": detail,
+                                "model": selected_model,
+                                "events": streamed_events,
+                                "status": "error",
+                                "created_at": now_iso(),
+                            }
+                            await db.workspace_chat_messages.insert_one(assistant_doc)
+                            await _append_workspace_activity(workspace, detail[:700])
+                            return
+                        await asyncio.sleep(0)
+                    result = await _finalize_codex_daytona_turn(
+                        workspace,
+                        runtime,
+                        user,
+                        message,
+                        selected_model,
+                        user_message,
+                        codex_final or {},
+                        streamed_events,
+                        attachments,
+                        plan_markdown,
+                        effort,
+                    )
+                    for event in result.get("events", [])[len(streamed_events):]:
+                        yield line({"type": "event", "event": event})
+                        await asyncio.sleep(0)
+                    yield line({"type": "result", "result": result})
+                    return
+
+                provider = runtime.get("provider") if runtime else "none"
+                setup_hint = (
+                    runtime.get("setup_hint")
+                    if runtime
+                    else "Start a Daytona runtime before sending project coding prompts."
+                )
+                detail = (
+                    "AI Workspace project chat requires the Daytona Codex SDK runtime. "
+                    f"Current runtime provider is `{provider}`. "
+                    "Set DAYTONA_API_KEY, WORKSPACE_RUNTIME_BRIDGE_ENABLED=true, "
+                    "WORKSPACE_CODEX_AGENT_ENABLED=true, and SANDBOX_OPENAI_API_KEY "
+                    "or WORKSPACE_CODEX_USE_SANDBOX_ENV=true. "
+                    f"{setup_hint or ''}"
+                ).strip()
+                yield line({"type": "error", "detail": detail})
+            except Exception as exc:
+                yield line({"type": "error", "detail": str(exc)})
+
+        return StreamingResponse(stream(), media_type="application/x-ndjson")
+
     @r.get("/workspaces/{workspace_id}/chat")
     async def workspace_chat_history(workspace_id: str, user=Depends(current_user)):
         await _workspace(workspace_id, user)
@@ -3205,6 +4265,66 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             {"workspace_id": workspace_id, "tenant_id": user["tenant_id"]}, {"_id": 0}
         ).sort("created_at", 1).to_list(300)
         return {"messages": messages}
+
+    @r.post("/workspaces/{workspace_id}/attachments")
+    async def upload_workspace_attachment(workspace_id: str, file: UploadFile = File(...), user=Depends(current_user)):
+        workspace = await _workspace(workspace_id, user)
+        filename = _safe_attachment_name(file.filename or "attachment")
+        if not _attachment_allowed(filename, file.content_type):
+            raise HTTPException(400, "Unsupported attachment type")
+        data = await file.read()
+        if len(data) > 8 * 1024 * 1024:
+            raise HTTPException(400, "Attachment is too large")
+        attachment_id = new_id()
+        stored_path = f".arevei/attachments/{attachment_id}-{filename}"
+        text_preview = _attachment_text_preview(data, file.content_type, filename)
+        runtime = await _runtime_session(workspace_id, user)
+        sandbox_path = stored_path
+        if runtime and runtime.get("provider") == "daytona" and runtime.get("provider_runtime_id"):
+            try:
+                sandbox = _daytona_workspace_sandbox(runtime)
+                remote_path = _remote_file_path(runtime, stored_path)
+                _daytona_exec(sandbox, f"mkdir -p {shlex.quote(posixpath.dirname(remote_path))}", timeout=30)
+                sandbox.fs.upload_file(data, remote_path)
+                sandbox_path = remote_path
+            except Exception as exc:
+                await _append_workspace_activity(workspace, f"Attachment upload to Daytona failed: {str(exc)[:240]}")
+        doc = {
+            "id": attachment_id,
+            "tenant_id": user["tenant_id"],
+            "workspace_id": workspace_id,
+            "project_id": workspace.get("project_id"),
+            "chat_id": workspace.get("chat_id"),
+            "user_id": user["user_id"],
+            "name": filename,
+            "mime_type": file.content_type,
+            "size": len(data),
+            "stored_path": stored_path,
+            "sandbox_path": sandbox_path,
+            "text_preview": text_preview,
+            "created_at": now_iso(),
+        }
+        await db.workspace_attachments.insert_one(doc)
+        doc.pop("_id", None)
+        return doc
+
+    @r.post("/workspaces/{workspace_id}/approvals/{approval_id}")
+    async def decide_workspace_approval(workspace_id: str, approval_id: str, payload: dict, user=Depends(current_user)):
+        await _workspace(workspace_id, user)
+        decision = str(payload.get("decision") or "").lower()
+        if decision not in {"allow", "deny"}:
+            raise HTTPException(400, "decision must be allow or deny")
+        approval = await db.workspace_command_approvals.find_one(
+            {"id": approval_id, "workspace_id": workspace_id, "tenant_id": user["tenant_id"]},
+            {"_id": 0},
+        )
+        if not approval:
+            raise HTTPException(404, "Approval not found")
+        if approval.get("status") != "pending":
+            raise HTTPException(409, "Approval has already been used")
+        updates = {"status": "allowed" if decision == "allow" else "denied", "decision": decision, "decided_at": now_iso()}
+        await db.workspace_command_approvals.update_one({"id": approval_id}, {"$set": updates})
+        return {"ok": True, "approval_id": approval_id, **updates}
 
     @r.get("/workspaces/{workspace_id}/changes")
     async def list_workspace_changes(workspace_id: str, user=Depends(current_user)):

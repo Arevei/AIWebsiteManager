@@ -25,13 +25,14 @@ AI Workspace Builder:
 - Start from a prompt, import a GitHub repository, or later wire ZIP upload into the same workspace creation flow.
 - Without GitHub App env vars, the platform uses a mock repository so the full prompt-to-workspace flow is testable.
 - For real GitHub repositories, configure `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, and `GITHUB_PRIVATE_KEY` in `backend/.env`.
-- For real AI code edits instead of the local fallback, configure `OPENAI_API_KEY` and optionally `OPENAI_MODEL`.
+- Project-mode AI code edits require the Daytona Codex SDK runtime. Static JSON fallback edits are disabled so the UI cannot pretend to change a codebase without a real sandbox agent.
 - For the recommended real workspace runtime, configure `DAYTONA_API_KEY`. You can also set `WORKSPACE_RUNTIME_PROVIDER` to `daytona`, `devpod`, `coder`, `gitpod`, or `e2b` with the matching provider token.
-- Until `WORKSPACE_RUNTIME_BRIDGE_ENABLED=true` and the provider bridge is wired, `/admin/dev` uses the built-in static preview fallback and records runtime logs without running real shell commands.
+- To run the coding agent inside Daytona with the Codex SDK, set `WORKSPACE_RUNTIME_BRIDGE_ENABLED=true`, `WORKSPACE_CODEX_AGENT_ENABLED=true`, `DAYTONA_API_KEY`, and `SANDBOX_OPENAI_API_KEY` for local development. In production, prefer Daytona Secrets for the OpenAI key and set `WORKSPACE_CODEX_USE_SANDBOX_ENV=true` so AREVEI relies on the sandbox-provided `OPENAI_API_KEY` instead of uploading a raw key. Optional: set `OPENAI_CODING_MODEL` and `WORKSPACE_CODEX_AGENT_TIMEOUT_SECONDS`.
+- Until `WORKSPACE_RUNTIME_BRIDGE_ENABLED=true` and Daytona is configured, `/admin/dev` can load and browse a workspace, but project chat returns a setup error instead of generating fake file edits.
 - For future real Vercel deployments, configure `VERCEL_TOKEN`; the current MVP records deploy jobs and leaves upload-based deploy execution for the container workspace phase.
 
 Recommended AREVEI runtime architecture:
 - AREVEI owns auth, GitHub App install, repo selection, prompt orchestration, AI model calls, code retrieval, diff review, accept/reject, chat memory, billing, commit/push, deployment jobs, and the browser workspace UI.
 - Daytona is the preferred third-party runtime for persistent workspace compute: filesystem, dependency install, terminal commands, snapshots, and live preview URLs. DevPod, Coder, Gitpod, and E2B can fit behind the same runtime bridge.
-- Accepted AI changes are synced into the runtime; rejected changes never touch the runtime or GitHub.
+- With `WORKSPACE_CODEX_AGENT_ENABLED=true`, Codex edits the Daytona checkout directly and AREVEI streams live agent activity back into project chat, then imports the resulting git diff into editor, commit, and revert controls. Without it, project chat remains disabled until a real Codex runtime is available.
 - Each workspace stores a lightweight knowledge index: repository structure, dependency graph, component/module graph, page graph, API graph, symbol index, file summaries, chat history, task outcomes, commits, and deployments.

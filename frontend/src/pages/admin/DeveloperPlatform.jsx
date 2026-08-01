@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import Editor from "@monaco-editor/react";
+import Editor, { DiffEditor } from "@monaco-editor/react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -11,6 +11,7 @@ import {
   DotsThree,
   Eye,
   File,
+  FileText,
   Folder,
   FolderOpen,
   Hammer,
@@ -21,6 +22,7 @@ import {
   List,
   MagnifyingGlass,
   Microphone,
+  Paperclip,
   PaperPlaneTilt,
   Play,
   Plus,
@@ -39,7 +41,7 @@ import {
   TrendUp,
   X,
 } from "@phosphor-icons/react";
-import { api, withPreviewAuth } from "../../lib/api";
+import { API, api, getToken, withPreviewAuth } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useTheme } from "../../lib/theme";
 
@@ -58,11 +60,28 @@ const CODE_MODELS = [
   { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
   { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
   { id: "gpt-5.5", label: "GPT-5.5" },
+  { id: "gpt-5.4", label: "GPT-5.4" },
+  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
   { id: "gpt-5.2", label: "GPT-5.2" },
 ];
 
 function encodePath(path) {
   return path.split("/").map(encodeURIComponent).join("/");
+}
+
+function _languageFromPath(path = "") {
+  const ext = path.split(".").pop()?.toLowerCase();
+  return {
+    js: "javascript",
+    jsx: "javascript",
+    ts: "typescript",
+    tsx: "typescript",
+    css: "css",
+    json: "json",
+    md: "markdown",
+    html: "html",
+    py: "python",
+  }[ext] || "plaintext";
 }
 
 function shortName(value, max = 34) {
@@ -105,10 +124,29 @@ function IconButton({ children, title, onClick, className = "" }) {
   );
 }
 
-function PromptBox({ value, setValue, onSubmit, disabled, theme, compact, mode, setMode, openImport, model, setModel }) {
+function PromptBox({
+  value,
+  setValue,
+  onSubmit,
+  disabled,
+  theme,
+  compact,
+  mode,
+  setMode,
+  openImport,
+  model,
+  setModel,
+  effort,
+  setEffort,
+  planMode,
+  setPlanMode,
+  attachments = [],
+  onAttach,
+  onRemoveAttachment,
+}) {
   const p = palette(theme);
   return (
-    <form onSubmit={onSubmit} className={cx("rounded-xl border shadow-[0_16px_45px_rgba(0,0,0,.14)]", p.input, compact ? "p-2" : "p-4")}>
+    <form onSubmit={onSubmit} className={cx("min-w-0 rounded-xl border shadow-[0_16px_45px_rgba(0,0,0,.14)]", p.input, compact ? "p-2" : "p-4")}>
       {!compact && (
         <div className={cx("mb-3 grid w-full max-w-[460px] grid-cols-2 rounded-lg border p-1", p.panelSoft)}>
           <button type="button" onClick={() => setMode("chat")} className={cx("rounded-md px-3 py-2 text-left", mode === "chat" ? p.button : p.muted)}>
@@ -123,19 +161,42 @@ function PromptBox({ value, setValue, onSubmit, disabled, theme, compact, mode, 
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder={compact ? "Ask a follow-up..." : mode === "chat" ? "Ask anything..." : "Ask AREVEI to build or edit a project..."}
-        className={cx("w-full resize-none bg-transparent text-[15px] leading-6 outline-none", compact ? "min-h-[44px]" : "min-h-[88px]")}
+        className={cx("w-full min-w-0 resize-none bg-transparent text-[15px] leading-6 outline-none", compact ? "min-h-[44px]" : "min-h-[88px]")}
       />
+      {attachments.length > 0 && (
+        <div className="mb-3 flex max-w-full flex-wrap gap-2 overflow-hidden">
+          {attachments.map((item) => (
+            <span key={item.id} className={cx("inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-xs", p.panelSoft)}>
+              <FileText size={14} />
+              <span className="max-w-[160px] truncate">{item.name}</span>
+              <button type="button" onClick={() => onRemoveAttachment?.(item.id)} className={cx("grid h-4 w-4 place-items-center rounded", p.hover)} title="Remove attachment">
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3">
-        <div className={cx("flex items-center gap-2", p.muted)}>
-          <IconButton title="Attach" className={p.hover}>
-            <Plus size={22} />
-          </IconButton>
+        <div className={cx("flex min-w-0 flex-wrap items-center gap-2", p.muted)}>
+          <label title="Attach images or documents" className={cx("grid h-9 w-9 cursor-pointer place-items-center rounded-md", p.hover)}>
+            <input type="file" multiple className="hidden" onChange={(event) => onAttach?.(event.target.files, event)} accept="image/*,.txt,.md,.json,.csv,.html,.css,.js,.jsx,.ts,.tsx,.pdf,.doc,.docx" />
+            <Paperclip size={20} />
+          </label>
           <label className={cx("flex h-9 items-center gap-2 rounded-md px-2 text-sm", p.hover)} title="Coding model">
             <SquaresFour size={18} />
             <select value={model} onChange={(event) => setModel?.(event.target.value)} className="max-w-[150px] bg-transparent text-sm outline-none">
               {CODE_MODELS.map((item) => <option key={item.id} value={item.id} className="bg-[#07100f] text-white">{item.label}</option>)}
             </select>
           </label>
+          <label className={cx("flex h-9 items-center gap-2 rounded-md px-2 text-sm", p.hover)} title="Reasoning effort">
+            <Sparkle size={16} />
+            <select value={effort} onChange={(event) => setEffort?.(event.target.value)} className="bg-transparent text-sm outline-none">
+              {["low", "medium", "high"].map((item) => <option key={item} value={item} className="bg-[#07100f] text-white">{item}</option>)}
+            </select>
+          </label>
+          <button type="button" onClick={() => setPlanMode?.(!planMode)} className={cx("flex h-9 items-center gap-2 rounded-md border px-2 text-sm", planMode ? "border-[#49e8ca55] text-[#49e8ca]" : p.inverseButton)}>
+            <List size={16} /> Plan
+          </button>
           {!compact && mode === "project" && (
             <button type="button" onClick={openImport} className={cx("flex h-9 items-center gap-2 rounded-md px-2 text-sm", p.hover)}>
               <GithubLogo size={18} /> Import from GitHub
@@ -287,28 +348,112 @@ function CommitModal({ open, onClose, onCommit, onRevert, value, setValue, loadi
   );
 }
 
-function PendingChangeReview({ changes, onApply, loading, theme }) {
+function AppliedChangeSummary({ changes, theme }) {
   const p = palette(theme);
-  const pending = changes?.find((change) => change.status === "proposed");
-  if (!pending) return null;
-  const files = pending.changes?.map((item) => item.path).filter(Boolean) || [];
+  const latest = changes?.find((change) => change.status === "applied");
+  if (!latest) return null;
+  const files = latest.files_changed?.map((item) => item.path).filter(Boolean) || latest.changes?.map((item) => item.path).filter(Boolean) || [];
   return (
     <div className={cx("mb-3 rounded-lg border p-3", p.panelSoft)}>
       <div className="mb-2 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className={cx("font-mono text-[11px] uppercase tracking-[.16em]", p.faint)}>Approve changes</div>
-          <div className="mt-1 truncate text-sm font-semibold">{pending.assistant_message}</div>
+          <div className={cx("font-mono text-[11px] uppercase tracking-[.16em]", p.faint)}>Applied edits</div>
+          <div className="mt-1 truncate text-sm font-semibold">{latest.assistant_message}</div>
         </div>
-        <div className="flex shrink-0 gap-2">
-          <button onClick={() => onApply(pending.id, false)} disabled={loading} className={cx("rounded-md border px-3 py-1.5 text-xs disabled:opacity-50", p.inverseButton)}>Deny</button>
-          <button onClick={() => onApply(pending.id, true)} disabled={loading} className={cx("rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50", p.button)}>Approve</button>
-        </div>
+        <span className={cx("shrink-0 rounded border px-2 py-1 font-mono text-[10px]", p.inverseButton)}>git diff</span>
       </div>
       <div className="flex flex-wrap gap-1.5">
         {files.slice(0, 6).map((path) => (
           <span key={path} className={cx("rounded border px-2 py-1 font-mono text-[11px]", p.inverseButton)}>{path}</span>
         ))}
         {files.length > 6 && <span className={cx("px-2 py-1 font-mono text-[11px]", p.faint)}>+{files.length - 6}</span>}
+      </div>
+    </div>
+  );
+}
+
+function MarkdownText({ text = "", theme }) {
+  const p = palette(theme);
+  const lines = String(text || "").split("\n");
+  return (
+    <div className="min-w-0 space-y-2 overflow-hidden break-words text-[14px] leading-6">
+      {lines.map((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <div key={index} className="h-2" />;
+        if (trimmed.startsWith("```")) return null;
+        if (trimmed.startsWith("#")) return <div key={index} className="mt-3 text-base font-semibold">{trimmed.replace(/^#+\s*/, "")}</div>;
+        if (/^[-*]\s+/.test(trimmed)) return <div key={index} className="pl-3 before:mr-2 before:content-['-']">{trimmed.replace(/^[-*]\s+/, "")}</div>;
+        if (/^`[^`]+`$/.test(trimmed)) return <code key={index} className={cx("block max-w-full overflow-x-auto rounded-md border p-2 font-mono text-xs", p.codeBg)}>{trimmed.slice(1, -1)}</code>;
+        return <p key={index} className="min-w-0 break-words">{trimmed}</p>;
+      })}
+    </div>
+  );
+}
+
+function AgentEventList({ events = [], theme, defaultOpen = false }) {
+  const p = palette(theme);
+  const [open, setOpen] = useState(defaultOpen);
+  if (!events.length) return null;
+  const visible = open ? events : events.slice(-1);
+  return (
+    <div className={cx("min-w-0 rounded-lg border text-sm", p.panelSoft)}>
+      <button type="button" onClick={() => setOpen(!open)} className={cx("flex h-10 w-full min-w-0 items-center justify-between gap-3 px-3 text-left", p.hover)}>
+        <span className="flex min-w-0 items-center gap-2">
+          <Terminal size={15} className="shrink-0" />
+          <span className="truncate font-mono text-[11px] uppercase tracking-[.16em]">{open ? "Hide activity" : `${events.length} actions`}</span>
+        </span>
+        <CaretDown size={14} className={cx("shrink-0 transition-transform", !open && "-rotate-90")} />
+      </button>
+      <div className="space-y-2">
+        {visible.slice(-14).map((event) => (
+          <div key={event.id || `${event.type}-${event.message}`} className="mx-3 mb-2 flex min-w-0 items-start gap-2">
+            <span className={cx("mt-1 h-1.5 w-1.5 shrink-0 rounded-full", event.type === "agent_finished" || event.type === "activity_finished" ? "bg-[#0d9f7c]" : event.type === "error" ? "bg-red-400" : "animate-pulse bg-white/35")} />
+            <div className="min-w-0">
+              <div className="break-words text-xs">{event.message}</div>
+              {event.path && <div className="truncate font-mono text-[11px] text-[#0d9f7c]">{event.path}</div>}
+              {event.command && <div className="max-w-full overflow-x-auto font-mono text-[11px] text-[#0d9f7c]">{event.command}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CommandApprovalCard({ approval, onDecision, loading, theme }) {
+  const p = palette(theme);
+  if (!approval) return null;
+  return (
+    <div className={cx("rounded-lg border p-3 text-sm", p.panelSoft)}>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 font-semibold"><Terminal size={16} /> Terminal approval</div>
+        <span className={cx("rounded border px-2 py-0.5 text-[10px] uppercase", approval.risk === "high" ? "border-red-400/40 text-red-300" : p.inverseButton)}>{approval.risk || "low"} risk</span>
+      </div>
+      <pre className={cx("max-w-full overflow-x-auto rounded-md border p-2 font-mono text-xs", p.codeBg)}>{approval.command}</pre>
+      {approval.cwd && <div className={cx("mt-2 truncate font-mono text-[11px]", p.faint)}>{approval.cwd}</div>}
+      <div className="mt-3 flex gap-2">
+        <button disabled={loading} onClick={() => onDecision?.(approval, "deny")} className={cx("flex-1 rounded-md border py-2 text-xs", p.inverseButton)}>Deny</button>
+        <button disabled={loading} onClick={() => onDecision?.(approval, "allow")} className={cx("flex-1 rounded-md py-2 text-xs font-semibold", p.button)}>Allow</button>
+      </div>
+    </div>
+  );
+}
+
+function ChangedFilesCard({ files = [], onOpenDiff, theme }) {
+  const p = palette(theme);
+  const list = files.filter((item) => item?.path);
+  if (!list.length) return null;
+  return (
+    <div className={cx("rounded-lg border p-3", p.panelSoft)}>
+      <div className={cx("mb-2 font-mono text-[11px] uppercase tracking-[.16em]", p.faint)}>edited files</div>
+      <div className="space-y-1.5">
+        {list.slice(0, 8).map((item) => (
+          <button key={item.path} onClick={() => onOpenDiff?.(item.path)} className={cx("flex h-8 w-full min-w-0 items-center gap-2 rounded px-2 text-left text-xs", p.hover)}>
+            <File size={15} className="shrink-0 text-[#0d9f7c]" />
+            <span className="min-w-0 flex-1 truncate font-mono">{item.path}</span>
+            <span className={cx("shrink-0 font-mono text-[10px]", p.faint)}>{item.status || "M"}</span>
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -365,9 +510,10 @@ function visibleFileRows(nodes, expanded) {
   return rows;
 }
 
-function FileTree({ tree, selectedPath, onSelect, theme, query, onContextMenu }) {
+function FileTree({ tree, selectedPath, onSelect, theme, query, onContextMenu, changedFiles = [] }) {
   const p = palette(theme);
   const nodes = useMemo(() => buildFileTree(tree), [tree]);
+  const changedByPath = useMemo(() => new Map((changedFiles || []).map((item) => [item.path, item.status || "M"])), [changedFiles]);
   const [expanded, setExpanded] = useState({ src: true, app: true, components: true, public: true });
   const rows = useMemo(() => {
     const all = visibleFileRows(nodes, expanded);
@@ -403,6 +549,7 @@ function FileTree({ tree, selectedPath, onSelect, theme, query, onContextMenu })
             )}
             <Icon size={16} className={cx("shrink-0", p.faint)} />
             <span className="min-w-0 flex-1 truncate">{node.name}</span>
+            {!isFolder && changedByPath.has(node.path) && <span className="shrink-0 font-mono text-[10px] text-[#0d9f7c]">{changedByPath.get(node.path) || "M"}</span>}
             {!isFolder && node.loaded && <span className={cx("shrink-0 text-[10px]", p.faint)}>loaded</span>}
           </button>
         );
@@ -411,9 +558,10 @@ function FileTree({ tree, selectedPath, onSelect, theme, query, onContextMenu })
   );
 }
 
-function DiffList({ changes, onApply, onOpenFile, theme }) {
+function DiffList({ changes, onOpenFile, onOpenDiff, theme }) {
   const p = palette(theme);
-  if (!changes?.length) return <div className={cx("text-sm", p.faint)}>Changes appear here for review.</div>;
+  if (!changes?.length) return <div className={cx("text-sm", p.faint)}>Applied changes and git diffs appear here.</div>;
+  const grouped = changes.flatMap((change) => (change.changes || []).map((file) => ({ ...file, change })));
   return (
     <div className="space-y-3">
       {changes.map((change) => (
@@ -423,23 +571,24 @@ function DiffList({ changes, onApply, onOpenFile, theme }) {
               <div className={cx("text-xs uppercase tracking-[.15em]", p.faint)}>{change.status}</div>
               <div className="mt-1 text-sm">{change.assistant_message}</div>
             </div>
-            {change.status === "proposed" && (
-              <div className="flex gap-2">
-                <button onClick={() => onApply(change.id, false)} className={cx("rounded-md border px-3 py-1 text-xs", p.inverseButton)}>Reject</button>
-                <button onClick={() => onApply(change.id, true)} className={cx("rounded-md px-3 py-1 text-xs font-semibold", p.button)}>Accept</button>
-              </div>
-            )}
+            <div className={cx("shrink-0 rounded border px-2 py-1 font-mono text-[10px]", p.inverseButton)}>
+              {change.files_changed?.length || change.changes?.length || 0} files
+            </div>
           </div>
           {change.changes?.map((file) => (
             <div key={file.path} className={cx("mt-2 rounded-md p-2", p.codeBg)}>
-              <button onClick={() => onOpenFile?.(file.path)} className="mb-1 font-mono text-xs text-[#0d9f7c] hover:underline">{file.path}</button>
-              <pre className={cx("max-h-32 overflow-auto whitespace-pre-wrap font-mono text-[11px]", p.muted)}>
+              <div className="mb-1 flex min-w-0 items-center justify-between gap-2">
+                <button onClick={() => onOpenFile?.(file.path)} className="min-w-0 truncate font-mono text-xs text-[#0d9f7c] hover:underline">{file.path}</button>
+                <button onClick={() => onOpenDiff?.(file.path)} className={cx("shrink-0 rounded border px-2 py-1 text-[10px]", p.inverseButton)}>Review</button>
+              </div>
+              <pre className={cx("max-h-32 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11px]", p.muted)}>
                 {file.patch?.split("\n").slice(0, 40).join("\n")}
               </pre>
             </div>
           ))}
         </div>
       ))}
+      {grouped.length > 0 && <div className={cx("rounded-lg border p-3 text-xs", p.panelSoft)}>{grouped.length} file diff(s) available for side-by-side review.</div>}
     </div>
   );
 }
@@ -488,9 +637,17 @@ export default function DeveloperPlatform() {
   const [recentLoading, setRecentLoading] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [agentStatus, setAgentStatus] = useState("");
+  const [agentEvents, setAgentEvents] = useState([]);
+  const [streamingText, setStreamingText] = useState("");
+  const [pendingApproval, setPendingApproval] = useState(null);
+  const [attachments, setAttachments] = useState([]);
+  const [selectedEffort, setSelectedEffort] = useState("medium");
+  const [planMode, setPlanMode] = useState(false);
+  const [activePlan, setActivePlan] = useState("");
+  const [diffReview, setDiffReview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("gpt-5.6-sol");
+  const [selectedModel, setSelectedModel] = useState("gpt-5.5");
   const p = palette(theme);
 
   const currentTitle = useMemo(
@@ -505,6 +662,8 @@ export default function DeveloperPlatform() {
   const workspaceUsage = Math.min(100, Math.round((recentWorkspaces.length / 20) * 100));
   const agentUsage = Math.min(100, Math.round((messages.filter((item) => item.role === "agent").length / 50) * 100));
   const visiblePreviewUrl = withPreviewAuth(runtime?.preview_url || "");
+  const codexReady = runtime?.provider === "daytona" && runtime?.codex_agent_status === "ready";
+  const runtimeLabel = codexReady ? "Daytona Codex ready" : runtime?.provider ? `${runtime.provider} ${runtime.status || "runtime"}` : "Runtime not started";
 
   useEffect(() => {
     localStorage.setItem("arevei_sidebar_open", String(sidebarOpen));
@@ -653,6 +812,12 @@ export default function DeveloperPlatform() {
     setCommitJob(null);
     setCommitHistory([]);
     setChangedFiles([]);
+    setAgentEvents([]);
+    setStreamingText("");
+    setPendingApproval(null);
+    setAttachments([]);
+    setActivePlan("");
+    setDiffReview(null);
     setRightView("preview");
   };
 
@@ -721,6 +886,160 @@ export default function DeveloperPlatform() {
     await loadGeneralChats();
   };
 
+  const uploadAttachments = async (fileList) => {
+    if (!workspace?.id || !fileList?.length) {
+      toast.error("Open a workspace before attaching files");
+      return;
+    }
+    const uploaded = [];
+    for (const file of Array.from(fileList)) {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await api.post(`/workspaces/${workspace.id}/attachments`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      uploaded.push(res.data);
+    }
+    setAttachments((items) => [...items, ...uploaded]);
+  };
+
+  const removeAttachment = (id) => {
+    setAttachments((items) => items.filter((item) => item.id !== id));
+  };
+
+  const findDiffForPath = (path) => {
+    for (const change of changes || []) {
+      const fileChange = (change.changes || []).find((item) => item.path === path);
+      if (fileChange) return fileChange;
+    }
+    return null;
+  };
+
+  const openDiffReview = async (path) => {
+    const diff = findDiffForPath(path);
+    if (diff) {
+      setDiffReview(diff);
+      setSelectedPath(path);
+      setRightView("editor");
+      return;
+    }
+    await openFile(null, path, true);
+  };
+
+  const decideApproval = async (approval, decision) => {
+    if (!workspace?.id || !approval?.id) return;
+    setLoading(true);
+    try {
+      await api.post(`/workspaces/${workspace.id}/approvals/${approval.id}`, { decision });
+      if (decision === "allow") {
+        const res = await api.post(`/workspaces/${workspace.id}/runtime/commands`, {
+          command: approval.command,
+          approval_id: approval.id,
+        });
+        await refreshWorkspace(workspace.id);
+        setRightView(res.data?.status === "preview_ready" ? "preview" : "logs");
+      }
+      setPendingApproval(null);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || err.message || "Approval failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const applyAgentResponse = async (data, workspaceId) => {
+    setAgentEvents(data?.events || []);
+    const changed = data?.files_changed || data?.changes || [];
+    const firstPath = changed.find((item) => item?.path)?.path;
+    if (firstPath) {
+      await openFile(workspaceId, firstPath, true);
+      setRightView("editor");
+    }
+  };
+
+  const streamWorkspaceAgent = async (workspaceId, message) => {
+    const localId = Date.now();
+    setStreamingText("");
+    setActivePlan("");
+    setPendingApproval(null);
+    setMessages((items) => [
+      ...items,
+      {
+        id: `local-user-${localId}`,
+        role: "user",
+        content: message,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+    const response = await fetch(`${API}/workspaces/${workspaceId}/ai/chat/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+      },
+      body: JSON.stringify({
+        message,
+        model: selectedModel,
+        effort: selectedEffort,
+        plan_mode: planMode,
+        attachments: attachments.map((item) => item.id),
+      }),
+    });
+    if (!response.ok || !response.body) {
+      const text = await response.text().catch(() => "");
+      let detail = text;
+      try {
+        detail = JSON.parse(text)?.detail || text;
+      } catch {
+        // Keep the raw response text when it is not JSON.
+      }
+      throw new Error(detail || `AI stream failed (${response.status})`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let result = null;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const rawLine of lines) {
+        if (!rawLine.trim()) continue;
+        const item = JSON.parse(rawLine);
+        if (item.type === "event" && item.event) {
+          setAgentEvents((events) => [...events, item.event]);
+          if (item.event.type === "plan_created" && item.event.plan_markdown) setActivePlan(item.event.plan_markdown);
+          if (item.event.type === "command_approval_required" && item.event.approval) setPendingApproval(item.event.approval);
+          if (item.event.path) setAgentStatus(item.event.message);
+          else if (item.event.message) setAgentStatus(item.event.message);
+        } else if (item.type === "plan" && item.markdown) {
+          setActivePlan(item.markdown);
+        } else if (item.type === "delta" && item.text) {
+          setStreamingText((text) => `${text}${item.text}`);
+          setAgentStatus("Codex is writing...");
+        } else if (item.type === "result") {
+          result = item.result;
+          if (result?.assistant_message) {
+            setStreamingText(result.assistant_message);
+          }
+        } else if (item.type === "error") {
+          if (item.detail) {
+            setAgentEvents((events) => [...events, { type: "error", message: item.detail, timestamp: new Date().toISOString() }]);
+            setAgentStatus(item.detail);
+          }
+          throw new Error(item.detail || "AI stream failed");
+        }
+      }
+    }
+    if (buffer.trim()) {
+      const item = JSON.parse(buffer);
+      if (item.type === "result") result = item.result;
+    }
+    return result || { changes: [], events: [] };
+  };
+
   const createProject = async (message) => {
     setAgentStatus("Creating workspace and starting runtime...");
     const res = await api.post("/projects/start", { prompt: message, name: shortName(message) });
@@ -729,10 +1048,14 @@ export default function DeveloperPlatform() {
     setChat(res.data.chat || null);
     setScreen("workspace");
     await autoSetupWorkspace(res.data);
-    setAgentStatus("Reading files and preparing first code proposal...");
-    await api.post(`/workspaces/${res.data.id}/ai/chat`, { message, model: selectedModel });
+    setAgentStatus("Reading files and applying first code edits...");
+    setAgentEvents([]);
+    const agentRes = await streamWorkspaceAgent(res.data.id, message);
+    await applyAgentResponse(agentRes, res.data.id);
     await refreshWorkspace(res.data.id);
     await loadRecentWorkspaces();
+    setStreamingText("");
+    setAttachments([]);
     setAgentStatus("");
   };
 
@@ -749,7 +1072,7 @@ export default function DeveloperPlatform() {
       }
       setPrompt("");
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Request failed");
+      toast.error(err.message || err.response?.data?.detail || "Request failed");
     } finally {
       setLoading(false);
     }
@@ -762,17 +1085,21 @@ export default function DeveloperPlatform() {
     setLoading(true);
     try {
       if (screen === "workspace" && workspace) {
-        setAgentStatus("Reading workspace context and preparing edits...");
-        const res = await api.post(`/workspaces/${workspace.id}/ai/chat`, { message, model: selectedModel });
+        setAgentStatus("Reading workspace context and applying edits...");
+        setAgentEvents([]);
+        const res = await streamWorkspaceAgent(workspace.id, message);
+        await applyAgentResponse(res, workspace.id);
         await refreshWorkspace(workspace.id);
         await loadRecentWorkspaces();
-        toast.success(res.data.changes?.length ? "AI code changes ready" : "AI responded");
+        setStreamingText("");
+        setAttachments([]);
+        toast.success(res.changes?.length ? "AI edited workspace files" : "AI responded");
       } else {
         await sendNormalChat(message);
       }
       setFollowUp("");
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Request failed");
+      toast.error(err.message || err.response?.data?.detail || "Request failed");
     } finally {
       setAgentStatus("");
       setLoading(false);
@@ -826,6 +1153,7 @@ export default function DeveloperPlatform() {
         setFileDrafts((drafts) => ({ ...drafts, [selectedPath]: editorValue }));
       }
       const res = await api.get(`/workspaces/${id}/files/${encodePath(path)}`);
+      setDiffReview(null);
       setSelectedPath(path);
       setFile(res.data);
       setEditorValue(fileDrafts[path] ?? res.data.content ?? "");
@@ -952,35 +1280,17 @@ export default function DeveloperPlatform() {
     }
   };
 
-  const applyChange = async (changeId, accept) => {
-    if (!workspace) return;
-    setLoading(true);
-    setAgentStatus(accept ? "Accepting sandbox diff..." : "Restoring rejected files...");
-    try {
-      await api.post(`/workspaces/${workspace.id}/changes/${changeId}/apply`, { accept });
-      await refreshWorkspace(workspace.id);
-      setRightView("preview");
-      toast.success(accept ? "Accepted" : "Rejected");
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Could not apply change");
-    } finally {
-      setAgentStatus("");
-      setLoading(false);
-    }
-  };
-
-
   const runBuildCheck = async (reason = "latest change") => {
     if (!workspace || !runtime?.build_command) return null;
     setAgentStatus(`Checking build with ${runtime.build_command}...`);
     const res = await api.post(`/workspaces/${workspace.id}/runtime/commands`, { command: runtime.build_command });
     if (res.data?.status === "command_failed") {
-      setAgentStatus("Build failed. Asking agent to prepare a repair proposal...");
+      setAgentStatus("Build failed. Asking agent to apply a focused repair...");
       await api.post(`/workspaces/${workspace.id}/ai/chat`, {
         message: `The build failed after ${reason}. Read the project files and prepare a focused fix. Build command: ${runtime.build_command}\n\nBuild output:\n${res.data.output || ""}`,
         model: selectedModel,
       });
-      toast.error("Build failed. AI repair proposal is ready to review.");
+      toast.error("Build failed. AI repair edits were applied for review in git diff.");
     }
     return res.data;
   };
@@ -1008,6 +1318,12 @@ export default function DeveloperPlatform() {
     setAgentStatus(`Running ${command}...`);
     try {
       const res = await api.post(`/workspaces/${workspace.id}/runtime/commands`, { command });
+      if (res.data?.status === "approval_required") {
+        setPendingApproval(res.data.approval);
+        setAgentEvents((events) => [...events, res.data.event].filter(Boolean));
+        setAgentStatus("Waiting for terminal approval.");
+        return;
+      }
       await refreshWorkspace(workspace.id);
       setRightView(res.data?.status === "preview_ready" ? "preview" : "logs");
     } catch (err) {
@@ -1116,7 +1432,7 @@ export default function DeveloperPlatform() {
   const commitWorkspace = async () => {
     if (!workspace) return;
     setLoading(true);
-    setAgentStatus("Committing accepted changes and pushing to GitHub...");
+    setAgentStatus("Committing workspace changes and pushing to GitHub...");
     try {
       const res = await api.post(`/workspaces/${workspace.id}/commit`, {
         message: commitMessage.trim(),
@@ -1256,6 +1572,13 @@ export default function DeveloperPlatform() {
                 openImport={() => setImportOpen(true)}
                 model={selectedModel}
                 setModel={setSelectedModel}
+                effort={selectedEffort}
+                setEffort={setSelectedEffort}
+                planMode={planMode}
+                setPlanMode={setPlanMode}
+                attachments={attachments}
+                onAttach={uploadAttachments}
+                onRemoveAttachment={removeAttachment}
               />
             </div>
           </div>
@@ -1271,7 +1594,7 @@ export default function DeveloperPlatform() {
                   <span className="truncate text-sm font-semibold">AI Workspace · {shortName(currentTitle, 42)}</span>
                   <CaretDown size={14} className={p.faint} />
                 </div>
-                <div className={cx("mt-0.5 font-mono text-[9px] uppercase tracking-[.12em]", p.faint)}>{workspace?.repo_full_name || "Project workspace"} · {workspace?.branch || "main"} · Connected</div>
+                <div className={cx("mt-0.5 font-mono text-[9px] uppercase tracking-[.12em]", p.faint)}>{workspace?.repo_full_name || "Project workspace"} - {workspace?.branch || "main"} - {runtimeLabel}</div>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -1285,29 +1608,57 @@ export default function DeveloperPlatform() {
           </header>
 
           <div className="flex min-h-0 flex-1">
-            <section className={cx("flex w-[390px] shrink-0 flex-col border-r", p.side)}>
-              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-                {messages.length === 0 ? (
-                  <div className={cx("text-sm", p.faint)}>
-                    {agentStatus ? (
-                      <div className={cx("rounded-lg border p-3", p.panelSoft)}>
-                        <div className="flex items-center gap-2">
-                          <SpinnerGap size={16} className="animate-spin text-[#0d9f7c]" />
-                          <span className="font-mono text-xs">{agentStatus}</span>
-                        </div>
-                      </div>
-                    ) : "Ask for a code change to start the build log."}
+            <section className={cx("flex w-[390px] min-w-0 shrink-0 flex-col overflow-hidden border-r", p.side)}>
+              <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-5 [scrollbar-width:thin]">
+                <div className={cx("mb-4 rounded-lg border p-3 text-xs", codexReady ? "border-[#0d9f7c55] bg-[#0d9f7c0d] text-[#0d9f7c]" : p.panelSoft)}>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-mono uppercase tracking-[.14em]">runtime</span>
+                    <span className="truncate">{runtimeLabel}</span>
                   </div>
+                  {!codexReady && (
+                    <div className={cx("mt-2 leading-5", p.muted)}>
+                      Project edits require Daytona plus the Codex SDK agent. Static fallback edits are disabled.
+                    </div>
+                  )}
+                </div>
+                {messages.length === 0 && !agentStatus ? (
+                  <div className={cx("text-sm", p.faint)}>Ask for a code change to start the build log.</div>
                 ) : (
-                  <div className="space-y-6">
-                    {messages.map((message) => (
-                      <div key={message.id}>
-                        <div className={cx("mb-2 flex items-center gap-2 text-xs uppercase tracking-[.14em]", p.faint)}>
-                          {message.role === "agent" ? <Terminal size={15} /> : <ChatCircle size={15} />} {message.role === "agent" ? "agent activity" : message.role}
+                  <div className="min-w-0 space-y-5 overflow-x-hidden">
+                    {messages.map((message) => {
+                      const isUser = message.role === "user";
+                      const files = (message.changed_files || []).map((path) => ({ path, status: "M" }));
+                      return (
+                        <div key={message.id} className={cx("min-w-0", isUser && "text-right")}>
+                          <div className={cx("mb-2 flex items-center gap-2 text-xs uppercase tracking-[.14em]", isUser ? "justify-end" : "", p.faint)}>
+                            <ChatCircle size={15} /> {isUser ? "user" : "assistant"}
+                          </div>
+                          <div className={cx("inline-block max-w-full rounded-lg border p-3 text-left", isUser ? "bg-[#12304d] text-white border-[#275a86]" : p.panelSoft)}>
+                            <MarkdownText text={message.content} theme={theme} />
+                          </div>
+                          {!isUser && message.events?.length > 0 && <div className="mt-3"><AgentEventList events={message.events} theme={theme} /></div>}
+                          {!isUser && files.length > 0 && <div className="mt-3"><ChangedFilesCard files={files} onOpenDiff={openDiffReview} theme={theme} /></div>}
+                          {!isUser && message.plan_markdown && <div className={cx("mt-3 rounded-lg border p-3", p.panelSoft)}><MarkdownText text={message.plan_markdown} theme={theme} /></div>}
                         </div>
-                        <div className={cx("whitespace-pre-wrap text-[15px] leading-7", message.role === "agent" && "font-mono text-xs")}>{message.content}</div>
+                      );
+                    })}
+                    {activePlan && (
+                      <div className={cx("rounded-lg border p-3", p.panelSoft)}>
+                        <div className={cx("mb-2 font-mono text-[11px] uppercase tracking-[.16em]", p.faint)}>implementation plan</div>
+                        <MarkdownText text={activePlan} theme={theme} />
                       </div>
-                    ))}
+                    )}
+                    <AgentEventList events={agentEvents} theme={theme} defaultOpen={Boolean(loading)} />
+                    <CommandApprovalCard approval={pendingApproval} onDecision={decideApproval} loading={loading} theme={theme} />
+                    <ChangedFilesCard files={changedFiles} onOpenDiff={openDiffReview} theme={theme} />
+                    {streamingText && (
+                      <div className={cx("rounded-lg border p-3", p.panelSoft)}>
+                        <div className={cx("mb-2 flex items-center gap-2 text-xs uppercase tracking-[.14em]", p.faint)}>
+                          <Terminal size={15} /> codex
+                        </div>
+                        <MarkdownText text={streamingText} theme={theme} />
+                      </div>
+                    )}
                     {commitJob && (
                       <div className={cx("rounded-lg border p-3 text-sm", p.panelSoft)}>
                         <div className={cx("mb-1 font-mono text-xs uppercase tracking-[.14em]", p.faint)}>last commit</div>
@@ -1330,8 +1681,24 @@ export default function DeveloperPlatform() {
                 )}
               </div>
               <div className={cx("border-t p-3", p.side)}>
-                <PendingChangeReview changes={changes} onApply={applyChange} loading={loading} theme={theme} />
-                <PromptBox value={followUp} setValue={setFollowUp} onSubmit={submitFollowUp} disabled={loading} theme={theme} compact model={selectedModel} setModel={setSelectedModel} />
+                <AppliedChangeSummary changes={changes} theme={theme} />
+                <PromptBox
+                  value={followUp}
+                  setValue={setFollowUp}
+                  onSubmit={submitFollowUp}
+                  disabled={loading}
+                  theme={theme}
+                  compact
+                  model={selectedModel}
+                  setModel={setSelectedModel}
+                  effort={selectedEffort}
+                  setEffort={setSelectedEffort}
+                  planMode={planMode}
+                  setPlanMode={setPlanMode}
+                  attachments={attachments}
+                  onAttach={uploadAttachments}
+                  onRemoveAttachment={removeAttachment}
+                />
               </div>
             </section>
 
@@ -1379,6 +1746,7 @@ export default function DeveloperPlatform() {
                 theme={theme}
                 query={fileSearchOpen ? fileSearch : ""}
                 onContextMenu={(event, node) => setTreeMenu({ x: event.clientX, y: event.clientY, node })}
+                changedFiles={changedFiles}
               />
               {treeMenu && (
                 <div className={cx("fixed z-[80] w-44 rounded-lg border p-1 shadow-2xl", p.panel)} style={{ left: treeMenu.x, top: treeMenu.y }} onMouseLeave={() => setTreeMenu(null)}>
@@ -1468,9 +1836,24 @@ export default function DeveloperPlatform() {
                     {runtimeLogs.length === 0 ? "No logs yet." : runtimeLogs.map((log) => <div key={log.id} className="mb-2"><span className="text-[#0d9f7c]">{log.level}</span> {log.message}</div>)}
                   </div>
                 ) : rightView === "diffs" ? (
-                  <div className="h-full overflow-auto p-5">
-                    <DiffList changes={changes} onApply={applyChange} onOpenFile={(path) => openFile(null, path)} theme={theme} />
+                  <div className="h-full overflow-auto overflow-x-hidden p-5 [scrollbar-width:thin]">
+                    <DiffList changes={changes} onOpenFile={(path) => openFile(null, path)} onOpenDiff={openDiffReview} theme={theme} />
                     <div className={cx("mt-5 rounded-lg border p-4 text-sm", p.panelSoft, p.muted)}>Knowledge: {knowledge?.memory?.summary || "not indexed"}</div>
+                  </div>
+                ) : diffReview ? (
+                  <div className="flex h-full min-h-0 flex-col">
+                    <div className={cx("flex h-9 shrink-0 items-center justify-between border-b px-3", p.side)}>
+                      <div className="min-w-0 truncate font-mono text-xs text-[#0d9f7c]">{diffReview.path}</div>
+                      <button onClick={() => setDiffReview(null)} className={cx("grid h-7 w-7 place-items-center rounded", p.hover)} title="Close diff"><X size={14} /></button>
+                    </div>
+                    <DiffEditor
+                      height="100%"
+                      language={_languageFromPath(diffReview.path)}
+                      original={diffReview.old || ""}
+                      modified={diffReview.new || ""}
+                      theme={theme === "dark" ? "vs-dark" : "vs-light"}
+                      options={{ renderSideBySide: true, readOnly: true, minimap: { enabled: false }, wordWrap: "on", scrollBeyondLastLine: false }}
+                    />
                   </div>
                 ) : file ? (
                   <div className="flex h-full min-h-0 flex-col">
