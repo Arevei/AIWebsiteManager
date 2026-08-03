@@ -720,3 +720,130 @@ html, body, #root {
 .tetris { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 1.5rem; }
 @media (max-width: 768px) { .tetris { grid-template-columns: 1fr; } }
 .btn-sharp { border-radius: 9999px !important; }
+
+.aui-codex-chat {
+  color: #fff;
+}
+.aui-thread {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+.aui-thread-header {
+  display: flex;
+  min-height: 50px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.025);
+  padding: 0 14px;
+}
+.aui-thread-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.aui-thread-subtitle {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255,255,255,.42);
+  font-size: 11px;
+}
+.aui-thread-viewport {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 14px 10px 0;
+}
+.aui-thread-empty {
+  margin: auto;
+  max-width: 270px;
+  text-align: center;
+  color: rgba(255,255,255,.42);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.aui-message {
+  display: flex;
+  max-width: 86%;
+  flex-direction: column;
+  gap: 5px;
+}
+.aui-message-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.aui-message-assistant {
+  align-self: flex-start;
+}
+.aui-message-label {
+  padding: 0 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+}
+.aui-message-bubble {
+  border-radius: 8px;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.aui-message-bubble-user {
+  background: #12304d;
+  color: #fff;
+}
+.aui-message-bubble-assistant {
+  background: rgba(255,255,255,.055);
+  color: rgba(255,255,255,.9);
+}
+.aui-thread-footer {
+  position: sticky;
+  bottom: 0;
+  margin: 0 -10px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  background: rgba(7,16,15,.96);
+  padding: 10px;
+}
+.aui-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  gap: 8px;
+}
+.aui-composer-input {
+  min-height: 42px;
+  max-height: 140px;
+  resize: none;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 8px;
+  background: rgba(255,255,255,.05);
+  padding: 10px 12px;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.45;
+  outline: none;
+}
+.aui-composer-input::placeholder {
+  color: rgba(255,255,255,.36);
+}
+.aui-composer-input:focus {
+  border-color: rgba(73,232,202,.55);
+}
+.aui-composer-send {
+  display: grid;
+  height: 42px;
+  width: 38px;
+  place-items: center;
+  border-radius: 8px;
+  background: #49e8ca;
+  color: #032c25;
+}
+.aui-composer-send:disabled {
+  opacity: .45;
+}

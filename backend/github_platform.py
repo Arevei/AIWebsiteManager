@@ -1609,6 +1609,13 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                     _map_codex_event_type(event.get("kind") or event.get("item_type")),
                     message,
                     name=event.get("item_type") or event.get("kind"),
+                    command=event.get("command"),
+                    output=_safe_text(event.get("output") or "", 2400),
+                    path=event.get("path"),
+                    paths=event.get("paths") or [],
+                    status=event.get("status"),
+                    plan_markdown=event.get("plan_markdown"),
+                    thread_id=event.get("thread_id"),
                 )
                 events.append(mapped)
                 if on_event:
@@ -1746,6 +1753,13 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 _map_codex_event_type(event.get("kind") or event.get("item_type")),
                 event.get("message") or "Codex event.",
                 name=event.get("item_type") or event.get("kind"),
+                command=event.get("command"),
+                output=_safe_text(event.get("output") or "", 2400),
+                path=event.get("path"),
+                paths=event.get("paths") or [],
+                status=event.get("status"),
+                plan_markdown=event.get("plan_markdown"),
+                thread_id=event.get("thread_id"),
             )
             final.setdefault("events", []).append(mapped)
             await emit({"type": "event", "event": mapped})
@@ -1787,12 +1801,20 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
 
     def _map_codex_event_type(kind: str | None) -> str:
         value = (kind or "").lower()
+        if "error" in value or "failed" in value:
+            return "tool_failed"
+        if "plan" in value or "todo" in value:
+            return "plan_created"
         if "command" in value:
-            return "tool_finished"
+            return "tool_finished" if "completed" in value or "finished" in value else "tool_started"
         if "file" in value:
-            return "file_edit_finished"
+            return "file_edit_finished" if "completed" in value else "file_edit_started"
         if "agent_message" in value:
             return "message_delta"
+        if "reasoning" in value:
+            return "activity_started"
+        if "turn_completed" in value or "turn_finished" in value or "codex_turn_finished" in value:
+            return "agent_finished"
         if "started" in value:
             return "agent_started"
         return "tool_finished"

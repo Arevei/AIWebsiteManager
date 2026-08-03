@@ -3,6 +3,14 @@ import Editor, { DiffEditor } from "@monaco-editor/react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
+  AssistantRuntimeProvider,
+  AuiIf,
+  ComposerPrimitive,
+  MessagePrimitive,
+  ThreadPrimitive,
+  useLocalRuntime,
+} from "@assistant-ui/react";
+import {
   ArrowUp,
   CaretDown,
   CheckCircle,
@@ -56,6 +64,7 @@ const ADMIN_NAV = [
 ];
 const AREVEI_LOGO = "/arevei-logo-mark.png";
 const CODE_MODELS = [
+  { id: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
   { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
   { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
   { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
@@ -348,30 +357,6 @@ function CommitModal({ open, onClose, onCommit, onRevert, value, setValue, loadi
   );
 }
 
-function AppliedChangeSummary({ changes, theme }) {
-  const p = palette(theme);
-  const latest = changes?.find((change) => change.status === "applied");
-  if (!latest) return null;
-  const files = latest.files_changed?.map((item) => item.path).filter(Boolean) || latest.changes?.map((item) => item.path).filter(Boolean) || [];
-  return (
-    <div className={cx("mb-3 rounded-lg border p-3", p.panelSoft)}>
-      <div className="mb-2 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className={cx("font-mono text-[11px] uppercase tracking-[.16em]", p.faint)}>Applied edits</div>
-          <div className="mt-1 truncate text-sm font-semibold">{latest.assistant_message}</div>
-        </div>
-        <span className={cx("shrink-0 rounded border px-2 py-1 font-mono text-[10px]", p.inverseButton)}>git diff</span>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {files.slice(0, 6).map((path) => (
-          <span key={path} className={cx("rounded border px-2 py-1 font-mono text-[11px]", p.inverseButton)}>{path}</span>
-        ))}
-        {files.length > 6 && <span className={cx("px-2 py-1 font-mono text-[11px]", p.faint)}>+{files.length - 6}</span>}
-      </div>
-    </div>
-  );
-}
-
 function MarkdownText({ text = "", theme }) {
   const p = palette(theme);
   const lines = String(text || "").split("\n");
@@ -390,71 +375,158 @@ function MarkdownText({ text = "", theme }) {
   );
 }
 
-function AgentEventList({ events = [], theme, defaultOpen = false }) {
+function extractMessageText(message) {
+  return (message?.content || [])
+    .map((part) => {
+      if (part?.type === "text") return part.text || "";
+      if (part?.text) return part.text;
+      return "";
+    })
+    .join("\n")
+    .trim();
+}
+
+function AssistantMessageBubble({ role, theme }) {
   const p = palette(theme);
-  const [open, setOpen] = useState(defaultOpen);
-  if (!events.length) return null;
-  const visible = open ? events : events.slice(-1);
   return (
-    <div className={cx("min-w-0 rounded-lg border text-sm", p.panelSoft)}>
-      <button type="button" onClick={() => setOpen(!open)} className={cx("flex h-10 w-full min-w-0 items-center justify-between gap-3 px-3 text-left", p.hover)}>
-        <span className="flex min-w-0 items-center gap-2">
-          <Terminal size={15} className="shrink-0" />
-          <span className="truncate font-mono text-[11px] uppercase tracking-[.16em]">{open ? "Hide activity" : `${events.length} actions`}</span>
-        </span>
-        <CaretDown size={14} className={cx("shrink-0 transition-transform", !open && "-rotate-90")} />
-      </button>
-      <div className="space-y-2">
-        {visible.slice(-14).map((event) => (
-          <div key={event.id || `${event.type}-${event.message}`} className="mx-3 mb-2 flex min-w-0 items-start gap-2">
-            <span className={cx("mt-1 h-1.5 w-1.5 shrink-0 rounded-full", event.type === "agent_finished" || event.type === "activity_finished" ? "bg-[#0d9f7c]" : event.type === "error" ? "bg-red-400" : "animate-pulse bg-white/35")} />
-            <div className="min-w-0">
-              <div className="break-words text-xs">{event.message}</div>
-              {event.path && <div className="truncate font-mono text-[11px] text-[#0d9f7c]">{event.path}</div>}
-              {event.command && <div className="max-w-full overflow-x-auto font-mono text-[11px] text-[#0d9f7c]">{event.command}</div>}
+    <MessagePrimitive.Root className={cx("aui-message", role === "user" ? "aui-message-user" : "aui-message-assistant")}>
+      <div className={cx("aui-message-label", p.faint)}>{role === "user" ? "You" : "Codex"}</div>
+      <div className={cx("aui-message-bubble", role === "user" ? "aui-message-bubble-user" : "aui-message-bubble-assistant")}>
+        <MessagePrimitive.Parts />
+      </div>
+    </MessagePrimitive.Root>
+  );
+}
+
+function AssistantCodexComposer({ disabled }) {
+  return (
+    <ComposerPrimitive.Root className="aui-composer">
+      <ComposerPrimitive.Input
+        disabled={disabled}
+        placeholder={disabled ? "Codex runtime is not ready" : "Message Codex..."}
+        submitMode="enter"
+        className="aui-composer-input"
+      />
+      <ComposerPrimitive.Send disabled={disabled} className="aui-composer-send">
+        <PaperPlaneTilt size={17} />
+      </ComposerPrimitive.Send>
+    </ComposerPrimitive.Root>
+  );
+}
+
+function AssistantCodexChat({
+  workspaceId,
+  selectedModel,
+  selectedEffort,
+  disabled,
+  agentStatus,
+  setAgentStatus,
+  onResult,
+  theme,
+}) {
+  const p = palette(theme);
+  const modelAdapter = useMemo(() => ({
+    async *run({ messages, abortSignal }) {
+      if (!workspaceId) {
+        yield { content: [{ type: "text", text: "Open or create a workspace before messaging Codex." }] };
+        return;
+      }
+      const userText = extractMessageText(messages[messages.length - 1]);
+      if (!userText) {
+        yield { content: [{ type: "text", text: "Send a message for Codex to work on." }] };
+        return;
+      }
+      setAgentStatus("Connecting to Codex...");
+      const response = await fetch(`${API}/workspaces/${workspaceId}/ai/chat/stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+        },
+        body: JSON.stringify({
+          message: userText,
+          model: selectedModel,
+          effort: selectedEffort,
+          plan_mode: false,
+          attachments: [],
+        }),
+        signal: abortSignal,
+      });
+      if (!response.ok || !response.body) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(detail || `Codex stream failed (${response.status})`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let text = "";
+      let finalResult = null;
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const rawLine of lines) {
+            if (!rawLine.trim()) continue;
+            const item = JSON.parse(rawLine);
+            if (item.type === "delta" && item.text) {
+              text += item.text;
+              setAgentStatus("Codex is responding...");
+              yield { content: [{ type: "text", text }] };
+            } else if (item.type === "event" && item.event?.message) {
+              setAgentStatus(item.event.message);
+            } else if (item.type === "result") {
+              finalResult = item.result;
+              text = item.result?.assistant_message || text;
+              yield { content: [{ type: "text", text: text || "Codex completed." }] };
+            } else if (item.type === "error") {
+              throw new Error(item.detail || "Codex stream failed");
+            }
+          }
+        }
+        if (buffer.trim()) {
+          const item = JSON.parse(buffer);
+          if (item.type === "result") {
+            finalResult = item.result;
+            text = item.result?.assistant_message || text;
+          }
+        }
+        if (!text) text = finalResult?.assistant_message || "Codex completed.";
+        yield { content: [{ type: "text", text }] };
+        await onResult?.(finalResult);
+      } finally {
+        setAgentStatus("");
+      }
+    },
+  }), [workspaceId, selectedModel, selectedEffort, setAgentStatus, onResult]);
+  const runtime = useLocalRuntime(modelAdapter);
+
+  return (
+    <div className={cx("aui-codex-chat h-full min-h-[520px] overflow-hidden rounded-lg border", p.panel)}>
+      <AssistantRuntimeProvider runtime={runtime}>
+        <ThreadPrimitive.Root className="aui-thread">
+          <div className="aui-thread-header">
+            <div>
+              <div className="aui-thread-title">Codex</div>
+              <div className="aui-thread-subtitle">{agentStatus || "assistant-ui runtime"}</div>
             </div>
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function CommandApprovalCard({ approval, onDecision, loading, theme }) {
-  const p = palette(theme);
-  if (!approval) return null;
-  return (
-    <div className={cx("rounded-lg border p-3 text-sm", p.panelSoft)}>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 font-semibold"><Terminal size={16} /> Terminal approval</div>
-        <span className={cx("rounded border px-2 py-0.5 text-[10px] uppercase", approval.risk === "high" ? "border-red-400/40 text-red-300" : p.inverseButton)}>{approval.risk || "low"} risk</span>
-      </div>
-      <pre className={cx("max-w-full overflow-x-auto rounded-md border p-2 font-mono text-xs", p.codeBg)}>{approval.command}</pre>
-      {approval.cwd && <div className={cx("mt-2 truncate font-mono text-[11px]", p.faint)}>{approval.cwd}</div>}
-      <div className="mt-3 flex gap-2">
-        <button disabled={loading} onClick={() => onDecision?.(approval, "deny")} className={cx("flex-1 rounded-md border py-2 text-xs", p.inverseButton)}>Deny</button>
-        <button disabled={loading} onClick={() => onDecision?.(approval, "allow")} className={cx("flex-1 rounded-md py-2 text-xs font-semibold", p.button)}>Allow</button>
-      </div>
-    </div>
-  );
-}
-
-function ChangedFilesCard({ files = [], onOpenDiff, theme }) {
-  const p = palette(theme);
-  const list = files.filter((item) => item?.path);
-  if (!list.length) return null;
-  return (
-    <div className={cx("rounded-lg border p-3", p.panelSoft)}>
-      <div className={cx("mb-2 font-mono text-[11px] uppercase tracking-[.16em]", p.faint)}>edited files</div>
-      <div className="space-y-1.5">
-        {list.slice(0, 8).map((item) => (
-          <button key={item.path} onClick={() => onOpenDiff?.(item.path)} className={cx("flex h-8 w-full min-w-0 items-center gap-2 rounded px-2 text-left text-xs", p.hover)}>
-            <File size={15} className="shrink-0 text-[#0d9f7c]" />
-            <span className="min-w-0 flex-1 truncate font-mono">{item.path}</span>
-            <span className={cx("shrink-0 font-mono text-[10px]", p.faint)}>{item.status || "M"}</span>
-          </button>
-        ))}
-      </div>
+          <ThreadPrimitive.Viewport className="aui-thread-viewport" autoScroll>
+            <AuiIf condition={(state) => state.thread.isEmpty}>
+              <div className="aui-thread-empty">Ask Codex to change, fix, build, or explain this workspace.</div>
+            </AuiIf>
+            <ThreadPrimitive.Messages>
+              {({ message }) => <AssistantMessageBubble role={message.role} theme={theme} />}
+            </ThreadPrimitive.Messages>
+            <ThreadPrimitive.ViewportFooter className="aui-thread-footer">
+              <AssistantCodexComposer disabled={disabled} />
+            </ThreadPrimitive.ViewportFooter>
+          </ThreadPrimitive.Viewport>
+        </ThreadPrimitive.Root>
+      </AssistantRuntimeProvider>
     </div>
   );
 }
@@ -1012,6 +1084,14 @@ export default function DeveloperPlatform() {
           setAgentEvents((events) => [...events, item.event]);
           if (item.event.type === "plan_created" && item.event.plan_markdown) setActivePlan(item.event.plan_markdown);
           if (item.event.type === "command_approval_required" && item.event.approval) setPendingApproval(item.event.approval);
+          const livePaths = item.event.paths?.length ? item.event.paths : item.event.path ? [item.event.path] : [];
+          if (livePaths.length) {
+            setChangedFiles((files) => {
+              const byPath = new Map(files.map((file) => [file.path, file]));
+              livePaths.forEach((path) => byPath.set(path, { path, status: item.event.status === "failed" ? "!" : "M" }));
+              return Array.from(byPath.values());
+            });
+          }
           if (item.event.path) setAgentStatus(item.event.message);
           else if (item.event.message) setAgentStatus(item.event.message);
         } else if (item.type === "plan" && item.markdown) {
@@ -1078,9 +1158,8 @@ export default function DeveloperPlatform() {
     }
   };
 
-  const submitFollowUp = async (e) => {
-    e.preventDefault();
-    const message = followUp.trim();
+  const submitFollowUpText = async (rawMessage) => {
+    const message = (rawMessage || "").trim();
     if (!message) return;
     setLoading(true);
     try {
@@ -1097,13 +1176,18 @@ export default function DeveloperPlatform() {
       } else {
         await sendNormalChat(message);
       }
-      setFollowUp("");
     } catch (err) {
       toast.error(err.message || err.response?.data?.detail || "Request failed");
     } finally {
       setAgentStatus("");
       setLoading(false);
     }
+  };
+
+  const submitFollowUp = async (e) => {
+    e.preventDefault();
+    await submitFollowUpText(followUp);
+    setFollowUp("");
   };
 
   const connectGithub = async () => {
@@ -1609,8 +1693,8 @@ export default function DeveloperPlatform() {
 
           <div className="flex min-h-0 flex-1">
             <section className={cx("flex w-[390px] min-w-0 shrink-0 flex-col overflow-hidden border-r", p.side)}>
-              <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-5 [scrollbar-width:thin]">
-                <div className={cx("mb-4 rounded-lg border p-3 text-xs", codexReady ? "border-[#0d9f7c55] bg-[#0d9f7c0d] text-[#0d9f7c]" : p.panelSoft)}>
+              <div className="shrink-0 px-3 pt-3">
+                <div className={cx("mb-3 rounded-lg border p-3 text-xs", codexReady ? "border-[#0d9f7c55] bg-[#0d9f7c0d] text-[#0d9f7c]" : p.panelSoft)}>
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-mono uppercase tracking-[.14em]">runtime</span>
                     <span className="truncate">{runtimeLabel}</span>
@@ -1621,84 +1705,44 @@ export default function DeveloperPlatform() {
                     </div>
                   )}
                 </div>
-                {messages.length === 0 && !agentStatus ? (
-                  <div className={cx("text-sm", p.faint)}>Ask for a code change to start the build log.</div>
-                ) : (
-                  <div className="min-w-0 space-y-5 overflow-x-hidden">
-                    {messages.map((message) => {
-                      const isUser = message.role === "user";
-                      const files = (message.changed_files || []).map((path) => ({ path, status: "M" }));
-                      return (
-                        <div key={message.id} className={cx("min-w-0", isUser && "text-right")}>
-                          <div className={cx("mb-2 flex items-center gap-2 text-xs uppercase tracking-[.14em]", isUser ? "justify-end" : "", p.faint)}>
-                            <ChatCircle size={15} /> {isUser ? "user" : "assistant"}
-                          </div>
-                          <div className={cx("inline-block max-w-full rounded-lg border p-3 text-left", isUser ? "bg-[#12304d] text-white border-[#275a86]" : p.panelSoft)}>
-                            <MarkdownText text={message.content} theme={theme} />
-                          </div>
-                          {!isUser && message.events?.length > 0 && <div className="mt-3"><AgentEventList events={message.events} theme={theme} /></div>}
-                          {!isUser && files.length > 0 && <div className="mt-3"><ChangedFilesCard files={files} onOpenDiff={openDiffReview} theme={theme} /></div>}
-                          {!isUser && message.plan_markdown && <div className={cx("mt-3 rounded-lg border p-3", p.panelSoft)}><MarkdownText text={message.plan_markdown} theme={theme} /></div>}
-                        </div>
-                      );
-                    })}
-                    {activePlan && (
-                      <div className={cx("rounded-lg border p-3", p.panelSoft)}>
-                        <div className={cx("mb-2 font-mono text-[11px] uppercase tracking-[.16em]", p.faint)}>implementation plan</div>
-                        <MarkdownText text={activePlan} theme={theme} />
-                      </div>
-                    )}
-                    <AgentEventList events={agentEvents} theme={theme} defaultOpen={Boolean(loading)} />
-                    <CommandApprovalCard approval={pendingApproval} onDecision={decideApproval} loading={loading} theme={theme} />
-                    <ChangedFilesCard files={changedFiles} onOpenDiff={openDiffReview} theme={theme} />
-                    {streamingText && (
-                      <div className={cx("rounded-lg border p-3", p.panelSoft)}>
-                        <div className={cx("mb-2 flex items-center gap-2 text-xs uppercase tracking-[.14em]", p.faint)}>
-                          <Terminal size={15} /> codex
-                        </div>
-                        <MarkdownText text={streamingText} theme={theme} />
-                      </div>
-                    )}
-                    {commitJob && (
-                      <div className={cx("rounded-lg border p-3 text-sm", p.panelSoft)}>
-                        <div className={cx("mb-1 font-mono text-xs uppercase tracking-[.14em]", p.faint)}>last commit</div>
-                        <div className="font-mono text-xs">{commitJob.commit_sha}</div>
-                        {commitJob.html_url && <a href={commitJob.html_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm text-[#0d9f7c]">Open on GitHub</a>}
-                      </div>
-                    )}
-                    {agentStatus && (
-                      <div className={cx("rounded-lg border p-3 text-sm", p.panelSoft)}>
-                        <div className="flex items-center gap-2">
-                          <SpinnerGap size={16} className="animate-spin text-[#0d9f7c]" />
-                          <span className="font-mono text-xs">{agentStatus}</span>
-                        </div>
-                        <div className={cx("mt-2 h-1 overflow-hidden rounded-full", p.panel)}>
-                          <div className="h-full w-2/3 animate-pulse bg-[#0d9f7c]" />
-                        </div>
-                      </div>
-                    )}
+                <div className={cx("mb-3 grid grid-cols-3 gap-2 text-xs", p.muted)}>
+                  <label className={cx("col-span-2 flex h-9 items-center gap-2 rounded-md border px-2", p.input)}>
+                    <SquaresFour size={15} />
+                    <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} className="min-w-0 flex-1 bg-transparent outline-none">
+                      {CODE_MODELS.map((item) => <option key={item.id} value={item.id} className="bg-[#07100f] text-white">{item.label}</option>)}
+                    </select>
+                  </label>
+                  <label className={cx("flex h-9 items-center gap-2 rounded-md border px-2", p.input)}>
+                    <Sparkle size={14} />
+                    <select value={selectedEffort} onChange={(event) => setSelectedEffort(event.target.value)} className="min-w-0 flex-1 bg-transparent outline-none">
+                      {["low", "medium", "high"].map((item) => <option key={item} value={item} className="bg-[#07100f] text-white">{item}</option>)}
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 px-3 pb-3">
+                <AssistantCodexChat
+                  workspaceId={workspace?.id}
+                  selectedModel={selectedModel}
+                  selectedEffort={selectedEffort}
+                  disabled={!codexReady}
+                  agentStatus={agentStatus}
+                  setAgentStatus={setAgentStatus}
+                  onResult={async () => {
+                    if (workspace?.id) {
+                      await refreshWorkspace(workspace.id);
+                      await loadRecentWorkspaces();
+                    }
+                  }}
+                  theme={theme}
+                />
+                {commitJob && (
+                  <div className={cx("mt-3 rounded-lg border p-3 text-sm", p.panelSoft)}>
+                    <div className={cx("mb-1 font-mono text-xs uppercase tracking-[.14em]", p.faint)}>last commit</div>
+                    <div className="font-mono text-xs">{commitJob.commit_sha}</div>
+                    {commitJob.html_url && <a href={commitJob.html_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm text-[#0d9f7c]">Open on GitHub</a>}
                   </div>
                 )}
-              </div>
-              <div className={cx("border-t p-3", p.side)}>
-                <AppliedChangeSummary changes={changes} theme={theme} />
-                <PromptBox
-                  value={followUp}
-                  setValue={setFollowUp}
-                  onSubmit={submitFollowUp}
-                  disabled={loading}
-                  theme={theme}
-                  compact
-                  model={selectedModel}
-                  setModel={setSelectedModel}
-                  effort={selectedEffort}
-                  setEffort={setSelectedEffort}
-                  planMode={planMode}
-                  setPlanMode={setPlanMode}
-                  attachments={attachments}
-                  onAttach={uploadAttachments}
-                  onRemoveAttachment={removeAttachment}
-                />
               </div>
             </section>
 
