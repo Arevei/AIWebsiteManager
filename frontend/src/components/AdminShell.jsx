@@ -8,6 +8,7 @@ const TOP_NAV = [
   { to: "/admin", label: "Dashboard" },
   { to: "/admin/dev", label: "AI Workspace" },
   { to: "/admin/agent", label: "Manager" },
+  { to: "/admin/blogs", label: "Blogs" },
   { to: "/admin?view=growth", label: "Growth" },
   { to: "/admin?view=settings", label: "Settings" },
 ];

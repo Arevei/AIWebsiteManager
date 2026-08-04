@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
@@ -30,6 +30,7 @@ const NAV_ITEMS = [
   { to: "/admin", label: "Dashboard", icon: House },
   { to: "/admin/dev", label: "AI Workspace", icon: Sparkle },
   { to: "/admin/agent", label: "Manager", icon: Robot },
+  { to: "/admin/blogs", label: "Blogs", icon: FileText },
   { to: "/admin?view=meetings", label: "Meetings", icon: Calendar },
   { to: "/admin?view=brain", label: "Brain", icon: Brain },
   { to: "/admin?view=growth", label: "Growth", icon: TrendUp },
@@ -86,6 +87,7 @@ function EmptyState({ title, body }) {
 
 export default function Agent() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [tab, setTab] = useState("roadmap");
   const [settings, setSettings] = useState({ auto_publish_low_risk: false });
   const [roadmap, setRoadmap] = useState({ active: null, draft: null });
@@ -148,17 +150,7 @@ export default function Agent() {
   };
 
   const proposeBlog = async () => {
-    setLoading(true);
-    try {
-      await api.post("/agent/blog/propose", {});
-      toast.success("Blog draft ready for review");
-      setTab("execution");
-      loadAll();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to draft blog");
-    } finally {
-      setLoading(false);
-    }
+    navigate("/admin/blogs?new=1");
   };
 
   const genGoals = async () => {
@@ -402,7 +394,18 @@ export default function Agent() {
               {actions.length === 0 ? <EmptyState title="Execution queue is empty" body="Generate tasks, then run the daily cycle to create reviewable actions." /> : actions.map((action) => (
                 <div key={action.id} className="aw-glass-card mb-3 rounded-2xl p-5">
                   <div className="flex items-start justify-between gap-4">
-                    <div><div className="text-xs uppercase tracking-[.16em] text-white/42">{action.status} - {action.tool_used || "manual"}</div><div className="mt-2">{action.input}</div><div className="mt-2 text-sm text-white/55">{action.output}</div></div>
+                    <div>
+                      <div className="text-xs uppercase tracking-[.16em] text-white/42">{action.status} - {action.agent_type || "website"} / {action.workflow_type || action.tool_used || "manual"}</div>
+                      <div className="mt-2 font-semibold">{action.deliverable?.title || action.input}</div>
+                      <div className="mt-2 text-sm text-white/55">{action.output}</div>
+                      {action.deliverable?.meta_description && <div className="mt-3 rounded-xl border border-white/[.06] bg-white/[.025] p-3 text-sm leading-6 text-white/62">{action.deliverable.meta_description}</div>}
+                      {action.deliverable?.keywords?.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {action.deliverable.keywords.slice(0, 6).map((keyword) => <span key={keyword} className="rounded-lg border border-[#49e8ca30] px-2 py-1 text-[11px] text-[#49e8ca]">{keyword}</span>)}
+                        </div>
+                      )}
+                      {action.deliverable?.review_notes?.length > 0 && <div className="mt-3 text-xs leading-5 text-white/42">Review: {action.deliverable.review_notes[0]}</div>}
+                    </div>
                     {action.status === "proposed" && <div className="flex gap-2"><button onClick={() => applyAction(action.id, false)} className="rounded-lg border border-white/12 px-3 py-2 text-sm"><XCircle className="inline" /> Reject</button><button onClick={() => applyAction(action.id, true)} className="rounded-lg bg-[#49e8ca] px-3 py-2 text-sm font-bold text-black"><CheckCircle className="inline" /> Publish</button></div>}
                   </div>
                 </div>

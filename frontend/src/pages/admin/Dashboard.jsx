@@ -26,6 +26,7 @@ import {
   TrendUp,
   UsersThree,
   X,
+  NotePencilIcon,
 } from "@phosphor-icons/react";
 
 const LOGO = "/arevei-logo-mark.png";
@@ -652,6 +653,7 @@ function DashboardHome({ site, userName, mode, setMode, build, onStartBuild, bui
     [House, "Dashboard", () => setMode("dashboard"), "dashboard"],
     [Sparkle, "AI Workspace", () => navigate("/admin/dev"), "workspace"],
     [Robot, "Manager", () => navigate("/admin/agent"), "manager"],
+    [NotePencilIcon, "Blogs", () => navigate("/admin/blogs"), "blogs"],
     [Calendar, "Meetings", () => setMode("meetings"), "meetings"],
     [Brain, "Brain", () => setMode("brain"), "brain"],
     [TrendUp, "Growth", () => setMode("growth"), "growth"],

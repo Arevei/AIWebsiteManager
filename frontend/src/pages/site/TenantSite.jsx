@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api";
 
 function Section({ section, theme }) {
@@ -160,6 +160,7 @@ function Section({ section, theme }) {
       return (
         <article style={{ background: bg, padding: "96px 24px" }}>
           <div style={{ maxWidth: 760, margin: "0 auto", color: text }}>
+            {c.image && <img src={c.image} alt={c.title || "Blog featured"} style={{ width: "100%", aspectRatio: "16 / 9", objectFit: "cover", borderRadius: 18, marginBottom: 32, border: `1px solid ${muted}30` }} />}
             <h1 style={{ fontFamily: headingFont, fontWeight: 900, fontSize: "clamp(32px, 5vw, 56px)", letterSpacing: "-0.03em" }}>{c.title}</h1>
             <div style={{ fontFamily: bodyFont, fontSize: 18, marginTop: 24, whiteSpace: "pre-wrap", lineHeight: 1.7 }}>{c.body}</div>
           </div>
@@ -172,8 +173,9 @@ function Section({ section, theme }) {
 
 export default function TenantSite() {
   const { slug } = useParams();
+  const [params] = useSearchParams();
   const [data, setData] = useState(null);
-  const [activeSlug, setActiveSlug] = useState("home");
+  const [activeSlug, setActiveSlug] = useState(params.get("page") || "home");
 
   useEffect(() => {
     api.get(`/site/public/${slug}`).then((r) => {

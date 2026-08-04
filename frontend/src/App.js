@@ -12,6 +12,7 @@ import Signup from "./pages/Signup";
 import Dashboard from "./pages/admin/Dashboard";
 import DeveloperPlatform from "./pages/admin/DeveloperPlatform";
 import Agent from "./pages/admin/Agent";
+import Blogs from "./pages/admin/Blogs";
 
 import SuperAdmin from "./pages/super/SuperAdmin";
 import TenantSite from "./pages/site/TenantSite";
@@ -41,6 +42,8 @@ export default function App() {
               <Route path="/admin" element={<Protected><Dashboard /></Protected>} />
               <Route path="/admin/dev" element={<Protected><DeveloperPlatform /></Protected>} />
               <Route path="/admin/agent" element={<Protected><Agent /></Protected>} />
+              <Route path="/admin/blogs" element={<Protected><Blogs /></Protected>} />
+              <Route path="/admin/blogs/:blogId" element={<Protected><Blogs /></Protected>} />
               <Route path="/admin/ai" element={<Navigate to="/admin/dev" replace />} />
               <Route path="/admin/talk" element={<Navigate to="/admin" replace />} />
               <Route path="/admin/content" element={<Navigate to="/admin" replace />} />

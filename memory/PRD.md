@@ -51,6 +51,34 @@ See `/app/memory/test_credentials.md`
 - Daily cycle reuses existing AI tool-calling engine — each task produces a proposed change that flows through the same approval/version snapshot pipeline as AI Studio actions
 - Verified end-to-end via curl: discovery (4 quarters), 5 goals, 6 tasks, cycle ran 3 tasks → 4 proposed actions with real tool calls (suggest_seo_improvements, generate_blog_post, generate_meta_tags), monthly report generated.
 
+## Phase 1 Agent Architecture — OpenAI Agents SDK
+AREVEI is an AI operating system, not a chatbot. The Manager plans and specialist agents execute bounded work. Each agent is defined by:
+- **Role** — the job it owns
+- **Goal** — the result it must produce
+- **Context** — the minimum tenant/site/task information it receives
+- **Tools** — the APIs, databases, editors, or search capabilities it may use
+- **Output** — the structured deliverable it returns for approval or storage
+
+Phase 1 keeps three top-level agents:
+- **Manager Agent** — owns strategy, roadmaps, task decomposition, scheduling, approvals, and delegation.
+- **Content Agent** — owns blog and SEO workflows. It internally coordinates research, keyword analysis, competitor analysis, outlining, writing, SEO optimization, internal links, image suggestions, metadata, and review.
+- **Website Agent** — owns safe site updates through existing structured tools and the approval/version snapshot pipeline.
+
+The implementation uses OpenAI Agents SDK concepts for specialist execution:
+- Specialist agents use Pydantic structured outputs instead of free-form prose.
+- Manager-controlled code orchestration routes task types such as `content.blog`, `content.seo`, `website.update`, `website.publish`, and `analytics.report`.
+- The target orchestration pattern is "manager agents as tools": specialists help with bounded work but do not take over the user-facing Manager workflow.
+- All publishable work creates an `agent_action` with `status=proposed`; publishing remains approval-gated.
+
+Future Content Agent evolution can split into internal Research, SEO, Outline, Writer, Fact Checker, Editor, Image, and Publisher agents without changing the public Manager interface.
+
+## Blog Workspace
+- `/admin/blogs` is the visible Content Agent workspace for generating, editing, previewing, and publishing blog posts.
+- Blog drafts are stored in `blog_posts` with editable content, SEO fields, image prompt, thumbnail, versions, agent timeline, and `agent_mind` stage outputs.
+- The Blog Agent workflow exposes Manager, Research, SEO, Outline, Writer, Editor, and Image Agent stages so users can inspect what each specialist produced.
+- `POST /api/agent/blogs/{blog_id}/image/generate` runs the Image Agent path and stores generated images in Cloudinary when configured.
+- Publishing snapshots the current site, appends or replaces the article page, applies blog SEO metadata, and deep-links published blogs with `/s/:siteSlug?page=:blogSlug`.
+
 ## P1 Backlog
 - Real Stripe billing (setup fee + monthly subscription)
 - AI streaming responses in chat (SSE)

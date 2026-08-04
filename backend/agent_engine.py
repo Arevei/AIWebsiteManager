@@ -8,6 +8,8 @@ import requests
 from datetime import datetime, timezone
 from typing import Any
 
+from specialist_agents import normalize_agent_task
+
 try:
     # pyrefly: ignore [missing-import]
     from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -225,19 +227,22 @@ async def decompose_goal_into_tasks(tenant_id: str, goal: dict) -> list[dict]:
     sys_msg = (
         "Decompose this monthly goal into 3-6 concrete, schedulable tasks. "
         "Return JSON: {\"tasks\": [{\"description\": str, \"type\": "
-        "\"content|design|seo|analytics\", \"priority\": \"low|medium|high\", "
+        "\"content.blog|content.seo|website.update|website.publish|analytics.report\", "
+        "\"priority\": \"low|medium|high\", "
         "\"effort\": \"15m|1h|half-day|day\", \"tool\": "
-        "\"update_theme_color|update_content_block|generate_blog_post|generate_meta_tags|suggest_seo_improvements|manual\"}, ...]}"
+        "\"update_theme_color|update_content_block|generate_blog_post|generate_meta_tags|suggest_seo_improvements|manual\", "
+        "\"agent_type\": \"content|website|analytics\", \"workflow_type\": str, "
+        "\"input_context\": object, \"quality_checks\": [str], \"approval_required\": true}, ...]}"
     )
     data = await _ask_json(f"tasks-{tenant_id}", sys_msg, json.dumps(goal))
-    return data.get("tasks", [])
+    return [normalize_agent_task(task) for task in data.get("tasks", []) if isinstance(task, dict)]
 
 
 # ---------- Daily execution ----------
 async def execute_task_to_prompt(task: dict) -> str:
     """Turn a task description into a chat prompt the existing AI engine can act on."""
     return (
-        f"As the website manager, execute this task: {task.get('description','')}. "
+        f"As AREVEI's {task.get('agent_type', 'website')} agent, execute this task: {task.get('description','')}. "
         f"Use the appropriate tool ({task.get('tool','manual')}) to propose changes."
     )
 
