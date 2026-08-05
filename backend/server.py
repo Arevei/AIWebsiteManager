@@ -69,6 +69,25 @@ app = FastAPI(title="AREVEI API")
 api = APIRouter(prefix="/api")
 
 
+def _cors_origins() -> list[str]:
+    raw = os.environ.get("CORS_ORIGINS", "")
+    configured = [
+        origin.strip().strip('"').strip("'")
+        for origin in raw.split(",")
+        if origin.strip()
+    ]
+    defaults = [
+        "https://app.arevei.com",
+        "https://arevei.com",
+        "https://www.arevei.com",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    if not configured or "*" in configured:
+        return defaults
+    return sorted(set(configured + defaults))
+
+
 # ----------------------- Helpers -----------------------
 def _slugify(name: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -729,7 +748,7 @@ app.include_router(build_github_platform_router(db))
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_origins=_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
