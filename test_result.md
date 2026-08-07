@@ -322,3 +322,27 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+  - task: "Agent edits not visible in codebase (dual-storage clobber bug)"
+    implemented: true
+    working: "NA"
+    file: "backend/github_platform.py (get_workspace_file, write_file tool)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "USER BUG: agent edits shown in chat but not visible in codebase/preview. ROOT CAUSE: get_workspace_file read the file from the Daytona sandbox when a runtime existed and OVERWROTE the Mongo agent edit with stale sandbox content, destroying the edit. FIX: agent write_file now marks the Mongo doc source='agent_edit' + pending_sync flag and pushes to sandbox when reachable; get_workspace_file no longer clobbers a pending edit — it returns the Mongo copy and pushes it into the sandbox instead. Needs testing-agent verification."
+
+agent_communication:
+    -agent: "main"
+    -message: |
+      VERIFY EDIT-VISIBILITY FIX (the editor uses GET /files to show content).
+      Auth: founder@demo.com / Demo@1234.
+      1. POST /api/projects/start {"prompt":"react","name":"vis"} -> capture workspace id.
+      2. POST /api/workspaces/{id}/ai/chat/stream {"message":"Edit src/App.jsx: change the main heading text to 'AREVEI EDIT MARKER 123'. Keep everything else.","model":"codex-mini"} -> confirm file_edit_finished for src/App.jsx and result status 'applied'.
+      3. GET /api/workspaces/{id}/files/src/App.jsx -> content MUST contain 'AREVEI EDIT MARKER 123' (the agent edit is visible, not clobbered).
+      4. GET it a SECOND time -> content still contains 'AREVEI EDIT MARKER 123' (stable, not overwritten on re-read).
+      5. Regression: GET /api/workspaces/ai/models -> 200, 6 models, default codex-mini.
+      Report pass/fail with the observed heading text from steps 3 and 4.

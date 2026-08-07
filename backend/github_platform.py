@@ -2871,9 +2871,22 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         path = _clean_workspace_path(path)
         runtime = await _runtime_session(workspace_id, user)
         if runtime and runtime.get("provider") == "daytona" and runtime.get("capabilities", {}).get("filesystem"):
+            cached = await _workspace_file(workspace_id, path)
+            # If the agent edited this file but it is not yet in the sandbox, the
+            # Mongo copy is authoritative. Push it into the sandbox and return it —
+            # NEVER overwrite a pending edit with stale sandbox content.
+            if cached and cached.get("pending_sync"):
+                try:
+                    _daytona_write_workspace_file(runtime, path, cached.get("content", ""))
+                    await db.workspace_files.update_one(
+                        {"workspace_id": workspace_id, "path": path},
+                        {"$set": {"pending_sync": False, "updated_at": now_iso()}},
+                    )
+                except Exception:
+                    pass
+                return {"path": path, "content": cached.get("content", ""), "language": cached.get("language") or _language_for_path(path)}
             try:
                 doc = _daytona_read_workspace_file(runtime, path)
-                cached = await _workspace_file(workspace_id, path)
                 await db.workspace_files.update_one(
                     {"workspace_id": workspace_id, "path": path},
                     {"$set": {
@@ -4498,11 +4511,20 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                         file_list.append(path)
                     prev = touched.get(path, {})
                     touched[path] = {"old": prev.get("old", old), "new": content, "status": "M" if existing else "A"}
+                    # Keep the sandbox (the real codebase) in sync so the edit is
+                    # visible in preview/commit. If the sandbox is not reachable,
+                    # mark pending_sync so get_workspace_file / runtime start pushes it.
+                    synced = False
                     if runtime and runtime.get("provider") == "daytona" and runtime.get("provider_runtime_id"):
                         try:
                             _daytona_write_workspace_file(runtime, path, content)
+                            synced = True
                         except Exception:
-                            pass
+                            synced = False
+                    await db.workspace_files.update_one(
+                        {"workspace_id": workspace_id, "path": path},
+                        {"$set": {"source": "agent_edit", "pending_sync": (not synced), "updated_at": now_iso()}},
+                    )
                     result = json.dumps({"ok": True, "path": path, "bytes": len(content)})
                     yield {"type": "event", "event": ev("file_edit_finished", f"Updated {path}", path=path, status="M")}
                 elif fn == "run_command":
