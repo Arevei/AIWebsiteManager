@@ -64,14 +64,10 @@ const ADMIN_NAV = [
 ];
 const AREVEI_LOGO = "/arevei-logo-mark.png";
 const CODE_MODELS = [
-  { id: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-  { id: "gpt-5.5", label: "GPT-5.5" },
-  { id: "gpt-5.4", label: "GPT-5.4" },
-  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-  { id: "gpt-5.2", label: "GPT-5.2" },
+  { id: "free", label: "Free · GPT-OSS 20B" },
+  { id: "cheap", label: "Fast · Gemini 2.5 Flash Lite" },
+  { id: "nim", label: "NVIDIA NIM · Llama 3.1" },
+  { id: "coding", label: "Pro Coder · Claude Sonnet 4.5" },
 ];
 
 function encodePath(path) {
@@ -719,7 +715,7 @@ export default function DeveloperPlatform() {
   const [diffReview, setDiffReview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("gpt-5.5");
+  const [selectedModel, setSelectedModel] = useState("free");
   const p = palette(theme);
 
   const currentTitle = useMemo(
@@ -734,8 +730,8 @@ export default function DeveloperPlatform() {
   const workspaceUsage = Math.min(100, Math.round((recentWorkspaces.length / 20) * 100));
   const agentUsage = Math.min(100, Math.round((messages.filter((item) => item.role === "agent").length / 50) * 100));
   const visiblePreviewUrl = withPreviewAuth(runtime?.preview_url || "");
-  const codexReady = runtime?.provider === "daytona" && runtime?.codex_agent_status === "ready";
-  const runtimeLabel = codexReady ? "Daytona Codex ready" : runtime?.provider ? `${runtime.provider} ${runtime.status || "runtime"}` : "Runtime not started";
+  const codexReady = true; // Cloud AI agent (OpenRouter router) runs server-side; no Daytona/Codex needed for edits.
+  const runtimeLabel = runtime?.provider ? `${runtime.provider} ${runtime.status || "runtime"}` : "Cloud AI agent ready";
 
   useEffect(() => {
     localStorage.setItem("arevei_sidebar_open", String(sidebarOpen));

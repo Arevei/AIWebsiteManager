@@ -32,6 +32,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from auth import current_user, decode_token
 from models import new_id, now_iso
+import model_router
 
 GITHUB_API = "https://api.github.com"
 MAX_INDEX_FILES = 120
@@ -3041,6 +3042,14 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         await _workspace(workspace_id, user)
         return await _refresh_workspace_knowledge(workspace_id)
 
+    @r.get("/ai/models")
+    async def list_ai_models(user=Depends(current_user)):
+        return {
+            "models": model_router.public_models(),
+            "default": model_router.default_model(),
+            "router_ready": model_router.router_ready(),
+        }
+
     @r.get("/runtime/providers")
     async def runtime_providers(user=Depends(current_user)):
         await _tenant_id(user)
@@ -4150,13 +4159,276 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         ]
         return change
 
+    def _agent_tools_schema() -> list[dict]:
+        return [
+            {"type": "function", "function": {
+                "name": "list_files",
+                "description": "List all file paths in the workspace so you understand the project structure.",
+                "parameters": {"type": "object", "properties": {}},
+            }},
+            {"type": "function", "function": {
+                "name": "read_file",
+                "description": "Read the full text content of one file in the workspace.",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+            }},
+            {"type": "function", "function": {
+                "name": "write_file",
+                "description": "Create or overwrite a file. Always pass the COMPLETE new file content, not a diff.",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]},
+            }},
+            {"type": "function", "function": {
+                "name": "run_command",
+                "description": "Run a shell command in the workspace runtime. Only works when a sandbox is running.",
+                "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]},
+            }},
+        ]
+
+    def _chunk_text(text: str, size: int = 24):
+        for i in range(0, len(text), size):
+            yield text[i:i + size]
+
+    def _tool_call_parts(call: Any) -> tuple[str, str, str]:
+        if isinstance(call, dict):
+            fn = call.get("function", {}) or {}
+            return call.get("id") or new_id(), fn.get("name") or "", fn.get("arguments") or "{}"
+        fn = getattr(call, "function", None)
+        return (
+            getattr(call, "id", None) or new_id(),
+            getattr(fn, "name", "") if fn else "",
+            getattr(fn, "arguments", "{}") if fn else "{}",
+        )
+
+    async def _finalize_local_agent_turn(workspace, user, message, model_name, user_message,
+                                         assistant_message, touched, run_outputs, events,
+                                         attachments, plan_markdown, effort):
+        workspace_id = workspace["id"]
+        diffs: list[dict] = []
+        files_changed: list[dict] = []
+        for path, info in touched.items():
+            if info["old"] == info["new"]:
+                continue
+            diff = _make_normalized_diff(path, info["old"], info["new"])
+            diff["patch_source"] = "litellm_agent"
+            diff["sandbox_applied"] = False
+            diffs.append(diff)
+            files_changed.append({"path": path, "status": info["status"]})
+        if files_changed:
+            events.append(_stream_event("git_changed", f"{len(files_changed)} file(s) changed.", files=files_changed))
+            first_path = files_changed[0]["path"]
+            await db.workspace_sessions.update_one(
+                {"id": workspace_id},
+                {"$set": {"active_file_path": first_path, "updated_at": now_iso()}},
+            )
+            events.append(_stream_event("open_file", f"Opening {first_path}.", path=first_path))
+        events.append(_stream_event("agent_finished", "Done. Review the diff, then commit or revert from Git controls."))
+        change = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "workspace_id": workspace_id,
+            "project_id": workspace.get("project_id"),
+            "chat_id": workspace.get("chat_id"),
+            "repo_id": workspace["repo_id"],
+            "user_id": user["user_id"],
+            "prompt": message,
+            "assistant_message": assistant_message,
+            "model": model_name,
+            "effort": effort,
+            "changes": diffs,
+            "files_changed": files_changed,
+            "attachments": attachments or [],
+            "plan_markdown": plan_markdown,
+            "patch": "",
+            "events": events,
+            "command_output": "\n\n".join(run_outputs)[:8000],
+            "status": "applied" if files_changed else "no_changes",
+            "applied_at": now_iso() if files_changed else None,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        await db.ai_change_sets.insert_one(change)
+        assistant_doc = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "workspace_id": workspace_id,
+            "project_id": workspace.get("project_id"),
+            "chat_id": workspace.get("chat_id"),
+            "repo_id": workspace["repo_id"],
+            "user_id": user["user_id"],
+            "role": "assistant",
+            "content": assistant_message,
+            "change_set_id": change["id"],
+            "model": model_name,
+            "effort": effort,
+            "changed_files": [c["path"] for c in files_changed],
+            "attachments": attachments or [],
+            "plan_markdown": plan_markdown,
+            "events": events,
+            "created_at": now_iso(),
+        }
+        await db.workspace_chat_messages.insert_one(assistant_doc)
+        summary = ", ".join([c["path"] for c in files_changed[:6]]) or "none"
+        await _append_workspace_activity(workspace, f"Agent changed {len(files_changed)} file(s): {summary}.")
+        change.pop("_id", None)
+        change["messages"] = [
+            {k: v for k, v in user_message.items() if k != "_id"},
+            {k: v for k, v in assistant_doc.items() if k != "_id"},
+        ]
+        return change
+
+    async def _stream_litellm_workspace_agent(workspace, message, enriched_message, user,
+                                              model_name, effort, attachments, plan_markdown):
+        workspace_id = workspace["id"]
+        friendly, model_slug, _note = model_router.resolve_model(model_name, tier="paid")
+
+        user_message = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "workspace_id": workspace_id,
+            "project_id": workspace.get("project_id"),
+            "chat_id": workspace.get("chat_id"),
+            "repo_id": workspace["repo_id"],
+            "user_id": user["user_id"],
+            "role": "user",
+            "content": message,
+            "attachments": attachments,
+            "plan_markdown": plan_markdown,
+            "effort": effort,
+            "created_at": now_iso(),
+        }
+        await db.workspace_chat_messages.insert_one(user_message)
+
+        files = await _active_files(workspace_id)
+        files_by_path: dict[str, dict] = {f["path"]: f for f in files if f.get("path")}
+        file_list = [p for p in files_by_path.keys()][:400]
+        runtime = await _runtime_session(workspace_id, user)
+
+        events: list[dict] = []
+        touched: dict[str, dict] = {}
+        run_outputs: list[str] = []
+
+        def ev(kind, msg, **extra):
+            event = _stream_event(kind, msg, **extra)
+            events.append(event)
+            return event
+
+        system_prompt = (
+            "You are AREVEI's coding agent working directly on the user's real project files.\n"
+            "Rules:\n"
+            "- Use tools to inspect and modify files. Call read_file before editing an existing file.\n"
+            "- write_file must contain the COMPLETE new content of the file (never a diff or a fragment).\n"
+            "- Make minimal, correct edits and keep the existing code style.\n"
+            "- Never paste large code blocks into the chat; put code ONLY through write_file.\n"
+            "- If the request is ambiguous, ask ONE short clarifying question instead of guessing.\n"
+            "- When finished, reply with a concise 2-4 sentence summary of exactly what you changed and why.\n\n"
+            f"Workspace files ({len(file_list)}):\n" + "\n".join(file_list[:200])
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": enriched_message},
+        ]
+        tools = _agent_tools_schema()
+
+        yield {"type": "event", "event": ev("agent_started", f"Thinking with {friendly}...")}
+        await asyncio.sleep(0)
+
+        final_text = ""
+        clarifying = False
+        for _step in range(8):
+            try:
+                resp = await model_router.acompletion(model_slug, messages, tools=tools, tool_choice="auto")
+            except Exception as exc:
+                yield {"type": "error", "detail": f"Model call failed: {exc}"}
+                return
+            choice = resp.choices[0]
+            assistant = model_router.message_to_dict(choice.message)
+            messages.append(assistant)
+            tool_calls = assistant.get("tool_calls") or []
+            if not tool_calls:
+                final_text = assistant.get("content") or ""
+                clarifying = not touched
+                break
+            for call in tool_calls:
+                call_id, fn, raw_args = _tool_call_parts(call)
+                try:
+                    args = json.loads(raw_args or "{}")
+                except Exception:
+                    args = {}
+                path = _clean_workspace_path(args.get("path", "")) if args.get("path") else None
+
+                if fn == "write_file" and path:
+                    yield {"type": "event", "event": ev("file_edit_started", f"Editing {path}", path=path)}
+                elif fn == "read_file" and path:
+                    yield {"type": "event", "event": ev("open_file", f"Reading {path}", path=path)}
+                elif fn == "run_command":
+                    yield {"type": "event", "event": ev("tool_started", f"Running: {args.get('command', '')}", command=args.get("command", ""))}
+                await asyncio.sleep(0)
+
+                # --- execute tool ---
+                if fn == "list_files":
+                    result = json.dumps({"files": file_list})
+                elif fn == "read_file":
+                    doc = files_by_path.get(path) if path else None
+                    if not doc and path:
+                        doc = await _workspace_file(workspace_id, path)
+                    result = (doc.get("content") or "")[:60000] if doc else json.dumps({"error": "file not found", "path": path})
+                elif fn == "write_file" and path:
+                    content = args.get("content", "")
+                    existing = files_by_path.get(path) or await _workspace_file(workspace_id, path)
+                    old = existing.get("content", "") if existing else ""
+                    original = existing.get("original_content", old) if existing else ""
+                    await _upsert_workspace_file(workspace_id, path, content, original=original if existing else "")
+                    await _ensure_tree_file(workspace, path)
+                    files_by_path[path] = {"path": path, "content": content, "language": _language_for_path(path)}
+                    if path not in file_list:
+                        file_list.append(path)
+                    prev = touched.get(path, {})
+                    touched[path] = {"old": prev.get("old", old), "new": content, "status": "M" if existing else "A"}
+                    if runtime and runtime.get("provider") == "daytona" and runtime.get("provider_runtime_id"):
+                        try:
+                            _daytona_write_workspace_file(runtime, path, content)
+                        except Exception:
+                            pass
+                    result = json.dumps({"ok": True, "path": path, "bytes": len(content)})
+                    yield {"type": "event", "event": ev("file_edit_finished", f"Updated {path}", path=path, status="M")}
+                elif fn == "run_command":
+                    cmd = (args.get("command") or "").strip()
+                    if not (runtime and runtime.get("provider") == "daytona" and runtime.get("provider_runtime_id")):
+                        result = json.dumps({"error": "No sandbox is running. Ask the user to click Start runtime for commands or preview."})
+                    else:
+                        try:
+                            active = await _active_files(workspace_id)
+                            res = _daytona_run_command(runtime, active, cmd)
+                            out = (res.get("output") or "")[:6000]
+                            run_outputs.append(f"$ {cmd}\n{out}")
+                            result = json.dumps({"exit_code": res.get("exit_code"), "output": out})
+                        except Exception as exc:
+                            result = json.dumps({"error": str(exc)})
+                    yield {"type": "event", "event": ev("command_output", "Command finished.", command=(args.get("command") or ""), output=result[:2000])}
+                else:
+                    result = json.dumps({"error": f"unknown tool {fn}"})
+
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": result})
+                await asyncio.sleep(0)
+
+        if not final_text:
+            final_text = "I applied the requested changes." if touched else "I reviewed the workspace but did not need to change any files."
+        for chunk in _chunk_text(final_text):
+            yield {"type": "delta", "text": chunk}
+            await asyncio.sleep(0)
+
+        result = await _finalize_local_agent_turn(
+            workspace, user, message, friendly, user_message, final_text,
+            {} if clarifying else touched, run_outputs, events, attachments, plan_markdown, effort,
+        )
+        yield {"type": "result", "result": result}
+
     @r.post("/workspaces/{workspace_id}/ai/chat/stream")
     async def workspace_ai_chat_stream(workspace_id: str, payload: dict, user=Depends(current_user)):
         async def stream():
             def line(data: dict) -> bytes:
                 return (json.dumps(data, default=str) + "\n").encode("utf-8")
 
-            started = _stream_event("agent_started", "Starting Daytona Codex workflow.")
+            started = _stream_event("agent_started", "Starting AI coding agent.")
             yield line({"type": "event", "event": started})
             await asyncio.sleep(0)
             try:
@@ -4182,6 +4454,20 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                     yield line({"type": "event", "event": plan_event})
                     yield line({"type": "plan", "markdown": plan_markdown})
                 enriched_message += _attachment_context(attachments)
+
+                # --- Primary path: cheap LiteLLM/OpenRouter server-side agent ---
+                # Edits the workspace file store directly (single source of truth for
+                # the editor), streams live file-edit events, and does NOT require a
+                # running sandbox. Replaces the expensive Codex-SDK-in-Daytona path.
+                if model_router.router_ready() and not payload.get("use_codex"):
+                    async for item in _stream_litellm_workspace_agent(
+                        workspace, message, enriched_message, user,
+                        payload.get("model"), effort, attachments, plan_markdown,
+                    ):
+                        yield line(item)
+                        await asyncio.sleep(0)
+                    return
+
                 runtime = await _runtime_session(workspace_id, user)
                 runtime = await _upgrade_runtime_to_current_provider(runtime, workspace_id) if runtime else None
                 runner = CodexDaytonaAgentRunner(runtime, selected_model) if runtime else None
