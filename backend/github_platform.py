@@ -3418,12 +3418,84 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "tenant_id": payload.get("tenant_id"),
         }
 
+    def _preview_waiting_html(title: str = "Preparing your preview", subtitle: str = "Waking up the workspace sandbox…") -> str:
+        return (
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/>"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
+            "<title>AREVEI · Preview</title>"
+            "<style>"
+            "*{box-sizing:border-box}html,body{height:100%;margin:0}"
+            "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+            "background:radial-gradient(1200px 600px at 50% -10%,#0b2b25 0%,#061012 55%,#04090a 100%);color:#e6fffa;"
+            "display:flex;align-items:center;justify-content:center;overflow:hidden}"
+            ".wrap{position:relative;text-align:center;padding:32px;max-width:520px;z-index:2}"
+            ".logo{width:64px;height:64px;margin:0 auto 22px;border-radius:18px;"
+            "background:linear-gradient(135deg,#32d6af,#0d9f7c);display:flex;align-items:center;justify-content:center;"
+            "box-shadow:0 0 40px rgba(50,214,175,.45);animation:pulse 1.8s ease-in-out infinite}"
+            ".logo svg{width:34px;height:34px}"
+            "h1{font-size:20px;font-weight:700;margin:0 0 8px;letter-spacing:-.01em}"
+            "p{margin:0;color:#8fb7ae;font-size:14px;line-height:1.5}"
+            ".bar{margin:26px auto 0;width:240px;height:6px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden}"
+            ".bar span{display:block;height:100%;width:40%;border-radius:99px;background:linear-gradient(90deg,#32d6af,#7af5db);"
+            "animation:slide 1.4s ease-in-out infinite}"
+            ".dots{margin-top:14px;font-size:12px;color:#5f857d;letter-spacing:.3em;text-transform:uppercase}"
+            ".orb{position:absolute;border-radius:50%;filter:blur(60px);opacity:.5;z-index:1}"
+            ".orb.a{width:340px;height:340px;background:#0d9f7c;top:-120px;left:-80px;animation:float 7s ease-in-out infinite}"
+            ".orb.b{width:300px;height:300px;background:#1f7fff33;bottom:-120px;right:-60px;animation:float 9s ease-in-out infinite reverse}"
+            "@keyframes pulse{0%,100%{transform:scale(1);box-shadow:0 0 40px rgba(50,214,175,.35)}"
+            "50%{transform:scale(1.08);box-shadow:0 0 60px rgba(50,214,175,.6)}}"
+            "@keyframes slide{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}"
+            "@keyframes float{0%,100%{transform:translate(0,0)}50%{transform:translate(20px,-24px)}}"
+            "</style></head><body>"
+            "<div class=\"orb a\"></div><div class=\"orb b\"></div>"
+            "<div class=\"wrap\">"
+            "<div class=\"logo\"><svg viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M12 2L2 21h20L12 2z\" fill=\"#04120f\"/></svg></div>"
+            f"<h1>{html.escape(title)}</h1>"
+            f"<p>{html.escape(subtitle)}</p>"
+            "<div class=\"bar\"><span></span></div>"
+            "<div class=\"dots\" id=\"msg\">Starting sandbox</div>"
+            "</div>"
+            "<script>"
+            "var msgs=['Starting sandbox','Booting dev server','Compiling app','Almost ready'];var i=0;"
+            "var el=document.getElementById('msg');"
+            "setInterval(function(){i=(i+1)%msgs.length;if(el)el.textContent=msgs[i];},2200);"
+            "setTimeout(function(){location.reload();},3500);"
+            "</script>"
+            "</body></html>"
+        )
+
+    def _wants_preview_html(request: Request, path: str) -> bool:
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept:
+            return True
+        last = path.rsplit("/", 1)[-1]
+        return path == "" or "." not in last
+
+    def _preview_waiting_response(request: Request, path: str, title: str, subtitle: str) -> Response:
+        if _wants_preview_html(request, path):
+            return Response(
+                content=_preview_waiting_html(title, subtitle),
+                media_type="text/html",
+                status_code=200,
+                headers={"Cache-Control": "no-store", "X-AREVEI-Preview": "warming"},
+            )
+        return Response(content=b"preview warming up", media_type="text/plain", status_code=503, headers={"Cache-Control": "no-store"})
+
+    def _is_daytona_daemon_error(status_code: int, body: bytes) -> bool:
+        if status_code in (502, 503, 504):
+            return True
+        try:
+            sample = body[:600].decode("utf-8", errors="ignore")
+        except Exception:
+            return False
+        return ("DAYTONA_DAEMON" in sample) or ("proxy upstream error" in sample and "statusCode" in sample)
+
     async def _proxy_workspace_preview_response(workspace_id: str, path: str, request: Request) -> Response:
         user = _preview_user_from_request(request)
         await _workspace(workspace_id, user)
         runtime = await _runtime_session(workspace_id, user)
         if not runtime:
-            raise HTTPException(404, "Runtime is not ready. Start the workspace runtime first.")
+            return _preview_waiting_response(request, path, "Starting your workspace", "Provisioning the preview runtime…")
         if (
             runtime.get("provider") == "daytona"
             and runtime.get("capabilities", {}).get("commands")
@@ -3438,9 +3510,9 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             runtime = ensured.get("runtime") or runtime
         upstream_preview_url = runtime.get("direct_preview_url") or runtime.get("preview_url")
         if _is_preview_proxy_url(upstream_preview_url, workspace_id):
-            raise HTTPException(502, "Preview upstream is still pointing at the AREVEI proxy. Restart the dev preview to refresh the Daytona URL.")
+            return _preview_waiting_response(request, path, "Preparing your preview", "Refreshing the sandbox preview link…")
         if not runtime or not upstream_preview_url:
-            raise HTTPException(404, "Preview URL is not ready. Run the dev server first.")
+            return _preview_waiting_response(request, path, "Preparing your preview", "The dev server is starting up…")
         base_parts = urlsplit(upstream_preview_url)
         upstream_path = "/" + path.lstrip("/")
         base_query_map = parse_qs(base_parts.query, keep_blank_values=True)
@@ -3469,8 +3541,12 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 timeout=30,
                 allow_redirects=True,
             )
-        except requests.RequestException as exc:
-            raise HTTPException(502, f"Preview upstream is not reachable: {str(exc)[:180]}")
+        except requests.RequestException:
+            return _preview_waiting_response(request, path, "Preview is waking up", "The sandbox was asleep and is starting again…")
+        # Never surface the raw Daytona daemon error (502 "proxy upstream error")
+        # to the iframe — show a branded waking-up page that auto-retries instead.
+        if _is_daytona_daemon_error(upstream.status_code, upstream.content):
+            return _preview_waiting_response(request, path, "Preview is waking up", "Your sandbox was asleep and is booting the app…")
         content_type = upstream.headers.get("content-type", "text/html")
         body = upstream.content
         if path.startswith(("@vite/", "@react-refresh", "src/")) and "text/html" in content_type:
@@ -3521,6 +3597,22 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
     @r.api_route("/workspaces/{workspace_id}/runtime/preview-proxy/{path:path}", methods=["GET", "HEAD"])
     async def proxy_workspace_preview_path(workspace_id: str, path: str, request: Request):
         return await _proxy_workspace_preview_response(workspace_id, path, request)
+
+    @r.post("/workspaces/{workspace_id}/runtime/keepalive")
+    async def keepalive_workspace_runtime(workspace_id: str, user=Depends(current_user)):
+        """Called periodically by the UI while a workspace/preview is open so the
+        Daytona sandbox does not auto-sleep. Pinging the direct preview URL resets
+        Daytona's idle auto-stop timer cheaply (no command execution)."""
+        await _workspace(workspace_id, user)
+        runtime = await _runtime_session(workspace_id, user)
+        url = runtime.get("direct_preview_url") if runtime else None
+        if not url or _is_preview_proxy_url(url, workspace_id):
+            return {"ok": True, "awake": False}
+        try:
+            requests.get(url, timeout=8, headers={"x-daytona-skip-preview-warning": "true"})
+            return {"ok": True, "awake": True}
+        except Exception:
+            return {"ok": True, "awake": False}
 
     @r.post("/workspaces/{workspace_id}/runtime/stop")
     async def stop_workspace_runtime(workspace_id: str, user=Depends(current_user)):

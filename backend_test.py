@@ -1,286 +1,235 @@
 #!/usr/bin/env python3
 """
-Focused backend test for AREVEI cheap coding agent.
-Tests the LiteLLM/OpenRouter model router and streaming workspace agent.
+Backend test for AREVEI preview proxy bug fix verification.
+Tests that the preview proxy returns a branded HTML waiting page instead of raw Daytona daemon JSON errors.
 """
-import json
-import os
-import sys
+
 import requests
-from typing import Iterator
+import json
+import sys
 
-# Backend URL from frontend .env
-BACKEND_URL = "https://github-import-lite.preview.emergentagent.com/api"
-AUTH_EMAIL = "founder@demo.com"
-AUTH_PASSWORD = "Demo@1234"
+# Backend base URL
+BASE_URL = "https://github-import-lite.preview.emergentagent.com"
 
-def log(msg: str):
-    """Print test log message."""
-    print(f"[TEST] {msg}", flush=True)
+# Test credentials
+EMAIL = "founder@demo.com"
+PASSWORD = "Demo@1234"
 
-def login() -> str:
-    """Login and return auth token."""
-    log(f"Logging in as {AUTH_EMAIL}...")
-    resp = requests.post(
-        f"{BACKEND_URL}/auth/login",
-        json={"email": AUTH_EMAIL, "password": AUTH_PASSWORD},
-        timeout=30
-    )
-    if resp.status_code != 200:
-        raise Exception(f"Login failed: {resp.status_code} {resp.text[:500]}")
-    data = resp.json()
-    token = data.get("token")
-    if not token:
-        raise Exception(f"No token in login response: {data}")
-    log(f"✓ Login successful")
-    return token
+def print_step(step_num, description):
+    """Print a test step header."""
+    print(f"\n{'='*80}")
+    print(f"STEP {step_num}: {description}")
+    print('='*80)
 
-def test_ai_models(token: str):
-    """Test 1: GET /api/workspaces/ai/models"""
-    log("Test 1: GET /api/workspaces/ai/models")
-    resp = requests.get(
-        f"{BACKEND_URL}/ai/models",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=30
-    )
-    if resp.status_code != 200:
-        raise Exception(f"GET /ai/models failed: {resp.status_code} {resp.text[:500]}")
-    
-    data = resp.json()
-    models = data.get("models", [])
-    default = data.get("default")
-    router_ready = data.get("router_ready")
-    
-    log(f"  Models returned: {len(models)}")
-    log(f"  Default model: {default}")
-    log(f"  Router ready: {router_ready}")
-    
-    # Verify 4 models
-    if len(models) != 4:
-        raise Exception(f"Expected 4 models, got {len(models)}: {models}")
-    
-    # Verify model names
-    model_ids = {m.get("id") for m in models}
-    expected = {"free", "cheap", "nim", "coding"}
-    if model_ids != expected:
-        raise Exception(f"Expected models {expected}, got {model_ids}")
-    
-    # Verify default is 'free'
-    if default != "free":
-        raise Exception(f"Expected default='free', got '{default}'")
-    
-    # Verify router_ready is true
-    if not router_ready:
-        raise Exception(f"Expected router_ready=true, got {router_ready}")
-    
-    log("✓ Test 1 PASSED: /ai/models returns 4 models, default='free', router_ready=true")
-    return True
+def print_result(passed, message, details=None):
+    """Print test result."""
+    status = "✅ PASS" if passed else "❌ FAIL"
+    print(f"{status}: {message}")
+    if details:
+        print(f"Details: {details}")
 
-def test_projects_start(token: str) -> str:
-    """Test 2: POST /api/projects/start - returns workspace id"""
-    log("Test 2: POST /api/projects/start")
-    resp = requests.post(
-        f"{BACKEND_URL}/projects/start",
-        headers={"Authorization": f"Bearer {token}"},
-        json={"prompt": "tiny test app", "name": "test"},
-        timeout=30
-    )
-    if resp.status_code != 200:
-        raise Exception(f"POST /projects/start failed: {resp.status_code} {resp.text[:500]}")
-    
-    data = resp.json()
-    workspace_id = data.get("id")
-    if not workspace_id:
-        raise Exception(f"No workspace id in response: {data}")
-    
-    log(f"  Workspace created: {workspace_id}")
-    log("✓ Test 2 PASSED: /projects/start returned workspace")
-    return workspace_id
+def truncate_body(body, max_len=200):
+    """Truncate body to max_len characters."""
+    if len(body) > max_len:
+        return body[:max_len] + "..."
+    return body
 
-def parse_ndjson_stream(content: str) -> list:
-    """Parse NDJSON stream (one JSON object per line)."""
-    events = []
-    for line in content.strip().split('\n'):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError as e:
-            print(f"[WARN] Failed to parse line: {line[:100]} - {e}")
-    return events
-
-def test_ai_chat_stream(token: str, workspace_id: str, model: str, message: str, expected_file: str):
-    """Test 3/5: POST /api/workspaces/{id}/ai/chat/stream"""
-    log(f"Test: POST /api/workspaces/{workspace_id}/ai/chat/stream (model={model})")
-    log(f"  Message: {message}")
+def test_preview_proxy_bug_fix():
+    """Main test function for preview proxy bug fix."""
     
-    resp = requests.post(
-        f"{BACKEND_URL}/workspaces/{workspace_id}/ai/chat/stream",
-        headers={"Authorization": f"Bearer {token}"},
-        json={"message": message, "model": model},
-        stream=True,
-        timeout=120
-    )
-    
-    if resp.status_code != 200:
-        raise Exception(f"POST /ai/chat/stream failed: {resp.status_code} {resp.text[:500]}")
-    
-    # Collect stream content
-    content = b""
-    for chunk in resp.iter_content(chunk_size=8192):
-        if chunk:
-            content += chunk
-    
-    # Decode to string
-    content = content.decode('utf-8')
-    
-    log(f"  Stream received: {len(content)} bytes")
-    
-    # Parse NDJSON
-    events = parse_ndjson_stream(content)
-    log(f"  Parsed {len(events)} events")
-    
-    # Collect event types
-    event_types = []
-    file_edit_started = []
-    file_edit_finished = []
-    result_obj = None
-    delta_texts = []
-    errors = []
-    
-    for item in events:
-        item_type = item.get("type")
-        event_types.append(item_type)
-        
-        if item_type == "event":
-            event = item.get("event", {})
-            raw_type = event.get("raw_type")
-            log(f"    → event: {raw_type} - {event.get('message', '')[:80]}")
-            if raw_type == "file_edit_started":
-                path = event.get("path")
-                file_edit_started.append(path)
-            elif raw_type == "file_edit_finished":
-                path = event.get("path")
-                file_edit_finished.append(path)
-        elif item_type == "delta":
-            delta_texts.append(item.get("text", ""))
-        elif item_type == "result":
-            result_obj = item.get("result")
-        elif item_type == "error":
-            errors.append(item.get("detail", "unknown error"))
-    
-    # Check for errors
-    if errors:
-        raise Exception(f"Stream contained errors: {errors}")
-    
-    # Verify file_edit_started for expected file
-    if expected_file not in file_edit_started:
-        raise Exception(f"Expected file_edit_started for '{expected_file}', got: {file_edit_started}")
-    
-    # Verify file_edit_finished for expected file
-    if expected_file not in file_edit_finished:
-        raise Exception(f"Expected file_edit_finished for '{expected_file}', got: {file_edit_finished}")
-    
-    # Verify result object
-    if not result_obj:
-        raise Exception(f"No result object in stream. Event types: {set(event_types)}")
-    
-    files_changed = result_obj.get("files_changed", [])
-    status = result_obj.get("status")
-    
-    log(f"  Result status: {status}")
-    log(f"  Files changed: {files_changed}")
-    
-    # Verify expected file in files_changed (files_changed is list of dicts with 'path' key)
-    changed_paths = [f.get("path") if isinstance(f, dict) else f for f in files_changed]
-    if expected_file not in changed_paths:
-        raise Exception(f"Expected '{expected_file}' in files_changed, got: {changed_paths}")
-    
-    # Verify status is 'applied'
-    if status != "applied":
-        raise Exception(f"Expected status='applied', got '{status}'")
-    
-    # Collect assistant summary
-    summary = "".join(delta_texts)
-    log(f"  Assistant summary: {summary[:200]}")
-    
-    log(f"✓ Test PASSED: model={model}, file={expected_file}, status=applied")
-    return True
-
-def test_file_content(token: str, workspace_id: str, file_path: str, expected_content: str):
-    """Test 4: GET /api/workspaces/{id}/files/{path}"""
-    log(f"Test: GET /api/workspaces/{workspace_id}/files/{file_path}")
-    
-    resp = requests.get(
-        f"{BACKEND_URL}/workspaces/{workspace_id}/files/{file_path}",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=30
-    )
-    
-    if resp.status_code != 200:
-        raise Exception(f"GET /files/{file_path} failed: {resp.status_code} {resp.text[:500]}")
-    
-    data = resp.json()
-    content = data.get("content", "")
-    
-    log(f"  File content: {content[:100]}")
-    
-    # Verify content contains expected text
-    if expected_content not in content:
-        raise Exception(f"Expected content to contain '{expected_content}', got: {content}")
-    
-    log(f"✓ Test PASSED: {file_path} contains '{expected_content}'")
-    return True
-
-def main():
-    """Run all tests."""
-    log("=" * 60)
-    log("AREVEI Cheap Coding Agent Backend Test")
-    log("=" * 60)
-    
+    # Step 1: Login
+    print_step(1, "Login with founder@demo.com")
     try:
-        # Login
-        token = login()
-        
-        # Test 1: GET /ai/models
-        test_ai_models(token)
-        
-        # Test 2: POST /projects/start
-        workspace_id = test_projects_start(token)
-        
-        # Test 3: POST /ai/chat/stream with model="free"
-        test_ai_chat_stream(
-            token, workspace_id, "free",
-            "Create a file hello.txt containing exactly: Hi",
-            "hello.txt"
+        login_response = requests.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": EMAIL, "password": PASSWORD},
+            timeout=10
         )
+        print(f"Status: {login_response.status_code}")
         
-        # Test 4: GET /files/hello.txt
-        test_file_content(token, workspace_id, "hello.txt", "Hi")
+        if login_response.status_code != 200:
+            print_result(False, f"Login failed with status {login_response.status_code}", login_response.text[:200])
+            return False
         
-        # Test 5: POST /ai/chat/stream with model="cheap" (model switching)
-        test_ai_chat_stream(
-            token, workspace_id, "cheap",
-            "Create a file greet.txt containing exactly: Hey",
-            "greet.txt"
-        )
+        login_data = login_response.json()
+        token = login_data.get("token")
         
-        # Verify greet.txt persisted
-        test_file_content(token, workspace_id, "greet.txt", "Hey")
+        if not token:
+            print_result(False, "No token in login response", str(login_data))
+            return False
         
-        log("=" * 60)
-        log("✓ ALL TESTS PASSED")
-        log("=" * 60)
-        return 0
+        print_result(True, "Login successful", f"Token: {token[:20]}...")
         
     except Exception as e:
-        log("=" * 60)
-        log(f"✗ TEST FAILED: {e}")
-        log("=" * 60)
-        import traceback
-        traceback.print_exc()
-        return 1
+        print_result(False, f"Login exception: {str(e)}")
+        return False
+    
+    # Step 2: Create workspace (NO runtime started)
+    print_step(2, "POST /api/projects/start to create workspace (no runtime)")
+    try:
+        create_response = requests.post(
+            f"{BASE_URL}/api/projects/start",
+            json={"prompt": "tiny", "name": "prev"},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30
+        )
+        print(f"Status: {create_response.status_code}")
+        print(f"Response: {truncate_body(create_response.text, 300)}")
+        
+        if create_response.status_code != 200:
+            print_result(False, f"Workspace creation failed with status {create_response.status_code}", create_response.text[:200])
+            return False
+        
+        workspace_data = create_response.json()
+        workspace_id = workspace_data.get("workspace_id") or workspace_data.get("id")
+        
+        if not workspace_id:
+            print_result(False, "No workspace_id in response", str(workspace_data))
+            return False
+        
+        print_result(True, f"Workspace created: {workspace_id}")
+        
+    except Exception as e:
+        print_result(False, f"Workspace creation exception: {str(e)}")
+        return False
+    
+    # Step 3: Test preview proxy with Accept: text/html
+    print_step(3, "GET /api/workspaces/{id}/runtime/preview-proxy with Accept: text/html")
+    try:
+        preview_url = f"{BASE_URL}/api/workspaces/{workspace_id}/runtime/preview-proxy?arevei_token={token}"
+        print(f"URL: {preview_url}")
+        
+        preview_response = requests.get(
+            preview_url,
+            headers={"Accept": "text/html"},
+            timeout=10
+        )
+        
+        status = preview_response.status_code
+        content_type = preview_response.headers.get("Content-Type", "")
+        body = preview_response.text
+        
+        print(f"Status: {status}")
+        print(f"Content-Type: {content_type}")
+        print(f"Body snippet: {truncate_body(body, 200)}")
+        
+        # Assertions
+        all_passed = True
+        
+        # Check status code
+        if status != 200:
+            print_result(False, f"Expected status 200, got {status}")
+            all_passed = False
+        else:
+            print_result(True, "Status is 200")
+        
+        # Check Content-Type
+        if "text/html" not in content_type.lower():
+            print_result(False, f"Expected Content-Type to contain 'text/html', got '{content_type}'")
+            all_passed = False
+        else:
+            print_result(True, f"Content-Type contains 'text/html': {content_type}")
+        
+        # Check body contains waiting/loading indicators (Preparing, waking, Starting, Provisioning)
+        body_lower = body.lower()
+        waiting_indicators = ["preparing", "waking", "starting", "provisioning"]
+        found_indicators = [ind for ind in waiting_indicators if ind in body_lower]
+        
+        if found_indicators:
+            print_result(True, f"Body contains waiting indicators: {found_indicators}")
+        else:
+            print_result(False, "Body does NOT contain any waiting indicators (preparing/waking/starting/provisioning)")
+            all_passed = False
+        
+        # Check body does NOT contain error indicators
+        error_indicators = ["DAYTONA_DAEMON", "statusCode", "proxy upstream error"]
+        found_errors = [indicator for indicator in error_indicators if indicator in body]
+        
+        if found_errors:
+            print_result(False, f"Body contains error indicators: {found_errors}")
+            all_passed = False
+        else:
+            print_result(True, "Body does NOT contain 'DAYTONA_DAEMON', 'statusCode', or 'proxy upstream error'")
+        
+        if not all_passed:
+            print(f"\nFull body:\n{body}")
+            return False
+        
+    except Exception as e:
+        print_result(False, f"Preview proxy exception: {str(e)}")
+        return False
+    
+    # Step 4: Test keepalive endpoint
+    print_step(4, "POST /api/workspaces/{id}/runtime/keepalive")
+    try:
+        keepalive_response = requests.post(
+            f"{BASE_URL}/api/workspaces/{workspace_id}/runtime/keepalive",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        
+        status = keepalive_response.status_code
+        print(f"Status: {status}")
+        print(f"Response: {truncate_body(keepalive_response.text, 200)}")
+        
+        if status != 200:
+            print_result(False, f"Expected status 200, got {status}", keepalive_response.text[:200])
+            return False
+        
+        keepalive_data = keepalive_response.json()
+        if keepalive_data.get("ok") != True:
+            print_result(False, f"Expected {{\"ok\": true}}, got {keepalive_data}")
+            return False
+        
+        print_result(True, "Keepalive endpoint returned 200 with {\"ok\": true}")
+        
+    except Exception as e:
+        print_result(False, f"Keepalive exception: {str(e)}")
+        return False
+    
+    # Step 5: Regression test - GET /api/ai/models
+    print_step(5, "Regression: GET /api/ai/models")
+    try:
+        models_response = requests.get(
+            f"{BASE_URL}/api/ai/models",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        
+        status = models_response.status_code
+        print(f"Status: {status}")
+        
+        if status != 200:
+            print_result(False, f"Expected status 200, got {status}", models_response.text[:200])
+            return False
+        
+        models_data = models_response.json()
+        models = models_data.get("models", [])
+        router_ready = models_data.get("router_ready")
+        
+        print(f"Models count: {len(models)}")
+        print(f"router_ready: {router_ready}")
+        
+        if len(models) != 4:
+            print_result(False, f"Expected 4 models, got {len(models)}")
+            return False
+        
+        if router_ready != True:
+            print_result(False, f"Expected router_ready=true, got {router_ready}")
+            return False
+        
+        print_result(True, "Models endpoint returned 200 with 4 models and router_ready=true")
+        
+    except Exception as e:
+        print_result(False, f"Models endpoint exception: {str(e)}")
+        return False
+    
+    # All tests passed
+    print("\n" + "="*80)
+    print("✅ ALL TESTS PASSED - Preview proxy bug fix verified successfully!")
+    print("="*80)
+    return True
 
 if __name__ == "__main__":
-    sys.exit(main())
+    success = test_preview_proxy_bug_fix()
+    sys.exit(0 if success else 1)

@@ -1481,6 +1481,17 @@ export default function DeveloperPlatform() {
     ensurePreview();
   }, [ensurePreview, previewLoading, rightView, runtime?.preview_url, screen, workspace?.id]);
 
+  // Keep the Daytona sandbox awake while the workspace UI is open so previews
+  // do not fall asleep mid-session. Cheap ping (no command execution).
+  useEffect(() => {
+    if (screen !== "workspace" || !workspace?.id) return undefined;
+    const id = setInterval(() => {
+      api.post(`/workspaces/${workspace.id}/runtime/keepalive`).catch(() => {});
+    }, 45000);
+    return () => clearInterval(id);
+  }, [screen, workspace?.id]);
+
+
   const handleSetRightView = (view) => {
     setRightView(view);
     if (view === "preview") {
