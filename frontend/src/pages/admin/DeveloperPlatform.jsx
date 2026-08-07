@@ -64,10 +64,12 @@ const ADMIN_NAV = [
 ];
 const AREVEI_LOGO = "/arevei-logo-mark.png";
 const CODE_MODELS = [
-  { id: "free", label: "Free · GPT-OSS 20B" },
-  { id: "cheap", label: "Fast · Gemini 2.5 Flash Lite" },
-  { id: "nim", label: "NVIDIA NIM · Llama 3.1" },
+  { id: "codex-mini", label: "Codex Mini · GPT-5.4 Mini" },
+  { id: "codex", label: "Codex · GPT-5.5" },
   { id: "coding", label: "Pro Coder · Claude Sonnet 4.5" },
+  { id: "cheap", label: "Fast · Gemini 2.5 Flash Lite" },
+  { id: "free", label: "Free · GPT-OSS 20B" },
+  { id: "nim", label: "NVIDIA NIM · Llama 3.1" },
 ];
 
 function encodePath(path) {
@@ -715,7 +717,7 @@ export default function DeveloperPlatform() {
   const [diffReview, setDiffReview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("free");
+  const [selectedModel, setSelectedModel] = useState("codex-mini");
   const p = palette(theme);
 
   const currentTitle = useMemo(

@@ -30,35 +30,60 @@ def _env(name: str, default: str = "") -> str:
 
 def model_catalog() -> dict[str, dict]:
     """Friendly name -> {slug, tier, label}. Slugs are configurable via env so
-    they can track the live OpenRouter/NVIDIA catalog without code changes."""
+    they can track the live OpenRouter/NVIDIA/OpenAI catalog without code changes."""
     return {
-        "free": {
-            "slug": _env("ROUTER_FREE_MODEL", "openrouter/openai/gpt-oss-20b:free"),
+        "codex-mini": {
+            "slug": _env("ROUTER_CODEX_MINI_MODEL", "openai/" + (_env("OPENAI_MODEL") or "gpt-5.4-mini")),
             "tier": "free",
-            "label": "Free · GPT-OSS 20B",
+            "label": "Codex Mini · GPT-5.4 Mini",
         },
-        "cheap": {
-            "slug": _env("ROUTER_CHEAP_MODEL", "openrouter/google/gemini-2.5-flash-lite"),
-            "tier": "free",
-            "label": "Fast · Gemini 2.5 Flash Lite",
-        },
-        "nim": {
-            "slug": _env("ROUTER_NIM_MODEL", "nvidia_nim/meta/llama-3.1-8b-instruct"),
-            "tier": "free",
-            "label": "NVIDIA NIM · Llama 3.1",
+        "codex": {
+            "slug": _env("ROUTER_CODEX_MODEL", "openai/" + (_env("OPENAI_CODING_MODEL") or "gpt-5.5")),
+            "tier": "paid",
+            "label": "Codex · GPT-5.5 (OpenAI)",
         },
         "coding": {
             "slug": _env("ROUTER_CODING_MODEL", "openrouter/anthropic/claude-sonnet-4.5"),
             "tier": "paid",
             "label": "Pro Coder · Claude Sonnet 4.5",
         },
+        "cheap": {
+            "slug": _env("ROUTER_CHEAP_MODEL", "openrouter/google/gemini-2.5-flash-lite"),
+            "tier": "free",
+            "label": "Fast · Gemini 2.5 Flash Lite",
+        },
+        "free": {
+            "slug": _env("ROUTER_FREE_MODEL", "openrouter/openai/gpt-oss-20b:free"),
+            "tier": "free",
+            "label": "Free · GPT-OSS 20B",
+        },
+        "nim": {
+            "slug": _env("ROUTER_NIM_MODEL", "nvidia_nim/meta/llama-3.1-8b-instruct"),
+            "tier": "free",
+            "label": "NVIDIA NIM · Llama 3.1",
+        },
     }
 
 
 def default_model() -> str:
     catalog = model_catalog()
-    preferred = _env("ROUTER_DEFAULT_MODEL", "free")
-    return preferred if preferred in catalog else "free"
+    preferred = _env("ROUTER_DEFAULT_MODEL", "codex-mini")
+    return preferred if preferred in catalog else "codex-mini"
+
+
+def router_ready() -> bool:
+    return litellm is not None and bool(
+        _env("OPENROUTER_API_KEY") or _env("NVIDIA_NIM_API_KEY") or _env("OPENAI_API_KEY")
+    )
+
+
+def _configure_env():
+    """LiteLLM reads provider keys straight from the environment; ensure the
+    common ones are present as bare values."""
+    for key in ("OPENROUTER_API_KEY", "NVIDIA_NIM_API_KEY", "NVIDIA_NIM_API_BASE", "OPENAI_API_KEY"):
+        value = _env(key)
+        if value:
+            os.environ[key] = value
 
 
 def resolve_model(name: str | None, tier: str = "free") -> tuple[str, str, str]:
@@ -85,19 +110,6 @@ def public_models() -> list[dict]:
         {"id": name, "slug": meta["slug"], "label": meta["label"], "tier": meta["tier"]}
         for name, meta in catalog.items()
     ]
-
-
-def router_ready() -> bool:
-    return litellm is not None and bool(_env("OPENROUTER_API_KEY") or _env("NVIDIA_NIM_API_KEY"))
-
-
-def _configure_env():
-    """LiteLLM reads OPENROUTER_API_KEY / NVIDIA_NIM_API_KEY straight from the
-    environment; we just make sure they are present as bare values."""
-    for key in ("OPENROUTER_API_KEY", "NVIDIA_NIM_API_KEY", "NVIDIA_NIM_API_BASE"):
-        value = _env(key)
-        if value:
-            os.environ[key] = value
 
 
 async def acompletion(

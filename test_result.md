@@ -245,3 +245,80 @@ agent_communication:
       5. ✓ Regression: GET /api/ai/models - Status: 200, 4 models, router_ready=true
       
       BUG FIX CONFIRMED: The preview proxy now correctly returns a branded animated HTML waiting page (with AREVEI branding, auto-refresh every 3.5s) instead of the raw Daytona daemon JSON error when the sandbox is asleep/not ready. The fix handles all error scenarios (runtime not ready, upstream unreachable, 502/503/504 responses) and displays user-friendly waiting messages.
+    -agent: "main"
+    -message: |
+      VERIFY FILE-CORRUPTION FIX + CODEX MODEL RESTORE (minimal, one small prompt).
+      Auth: founder@demo.com / Demo@1234.
+      1. GET /api/workspaces/ai/models -> expect 200, 6 models including ids 'codex-mini' and 'codex', default == 'codex-mini', router_ready true.
+      2. POST /api/projects/start {"prompt":"react","name":"fix"} -> capture workspace id.
+      3. POST /api/workspaces/{id}/ai/chat/stream {"message":"Edit src/main.jsx: add a line at the very top: console.log('AREVEI ready'); keep the rest unchanged","model":"codex-mini"} (NDJSON). Expect file_edit_started+file_edit_finished for src/main.jsx and result status 'applied'.
+      4. GET /api/workspaces/{id}/files/src/main.jsx -> content must CONTAIN "console.log('AREVEI ready')" and must NOT contain the literal 6-char sequence backslash-u-0-0-2-7 (\\u0027) or backslash-u-0-0-2-2 (\\u0022). Confirms no over-escape corruption and valid quotes.
+      5. Model switch smoke: repeat step 3 once with {"model":"free","message":"Create file z.txt containing exactly: done"} -> confirm z.txt persisted.
+      Report pass/fail with the first line of main.jsx and whether any \\uXXXX corruption was present.
+    -agent: "testing"
+    -message: |
+      ✓ FILE CORRUPTION FIX + CODEX MODEL RESTORATION VERIFIED - ALL TESTS PASSED
+      
+      Test Results (6 steps):
+      1. ✓ GET /api/ai/models - Status: 200
+         - Models count: 6 (codex-mini, codex, coding, cheap, free, nim) ✓
+         - 'codex-mini' present in model IDs ✓
+         - 'codex' present in model IDs ✓
+         - Default model: 'codex-mini' ✓
+         - router_ready: true ✓
+      
+      2. ✓ POST /api/projects/start {"prompt":"react","name":"fix"} - Status: 200
+         - Workspace ID: 34c50987-b3d3-4a9c-a62b-be1046e85f82
+      
+      3. ✓ POST /api/workspaces/{id}/ai/chat/stream with model='codex-mini' - Status: 200
+         - Message: "Edit src/main.jsx: add a line at the very top: console.log('AREVEI ready'); keep the rest unchanged"
+         - Received 11 NDJSON events
+         - file_edit_started event found with path='src/main.jsx' ✓
+         - file_edit_finished event found with path='src/main.jsx' ✓
+         - Result status: 'applied' ✓
+      
+      4. ✓ GET /api/workspaces/{id}/files/src/main.jsx - Status: 200
+         - File content contains: console.log('AREVEI ready') ✓
+         - NO \\u0027 corruption found (over-escaped single quote) ✓
+         - NO \\u0022 corruption found (over-escaped double quote) ✓
+         - First line of actual content: console.log('AREVEI ready');
+         - File uses real quotes, not literal escape sequences
+      
+      5. ✓ Model switching test with model='free' - Status: 200
+         - Message: "Create file z.txt containing exactly: done"
+         - Received 8 NDJSON events
+         - z.txt created successfully
+      
+      6. ✓ GET /api/workspaces/{id}/files/z.txt - Status: 200
+         - Content: "done" ✓
+         - Model switching between 'codex-mini' and 'free' works correctly
+      
+      BUG FIX CONFIRMED: The file content corruption bug is FIXED. Previously, file content was being over-escaped with literal Unicode escape sequences (\\u0027 for single quotes, \\u0022 for double quotes), which would appear as the literal 6-character sequences in the file instead of actual quotes. Now the files contain real quotes and the content is properly formatted. The Codex models (codex-mini and codex) have been successfully restored to the model catalog with codex-mini as the default model.
+
+  - task: "File content corruption fix + Codex model restoration (bug)"
+    implemented: true
+    working: true
+    file: "backend/model_router.py, backend/github_platform.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "BUG: File content was being over-escaped with literal Unicode sequences (\\u0027 for single quotes, \\u0022 for double quotes) appearing in saved files instead of actual quotes. Also, Codex models were missing from the model catalog. FIX: (1) Restored codex-mini and codex models to model_router.py, set codex-mini as default. (2) Fixed file content escaping in workspace file write operations. Now files contain real quotes, not literal escape sequences. Needs testing-agent verification."
+        -working: true
+        -agent: "testing"
+        -comment: "PASSED. All 6 test steps verified successfully: (1) GET /api/ai/models returns 6 models including 'codex-mini' and 'codex', default='codex-mini', router_ready=true. (2) Created React workspace successfully. (3) Used codex-mini model to edit src/main.jsx, added console.log('AREVEI ready') at the top, received file_edit_started and file_edit_finished events with path='src/main.jsx', result status='applied'. (4) Retrieved src/main.jsx content, verified it contains console.log('AREVEI ready') with real quotes and does NOT contain \\u0027 or \\u0022 literal escape sequences. (5) Model switching test with 'free' model created z.txt with 'done'. (6) Verified z.txt persisted correctly. Bug fix confirmed - file content corruption is resolved, quotes are real, and Codex models are restored."
+
+metadata:
+  created_by: "main_agent"
+  version: "2.2"
+  test_sequence: 3
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "File content corruption fix + Codex model restoration (bug)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"

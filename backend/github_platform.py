@@ -614,8 +614,24 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             ),
         }
 
+    def _fix_overescaped_source(value: str) -> str:
+        """Some models emit over-escaped punctuation (e.g. \\u0027 instead of ')
+        when returning code inside JSON tool arguments. Decode the common ASCII
+        punctuation escapes so files are valid source, not literal escapes."""
+        if "\\u00" not in value:
+            return value
+        mapping = {
+            "\\u0027": "'", "\\u0022": '"', "\\u003c": "<", "\\u003e": ">",
+            "\\u0026": "&", "\\u002f": "/", "\\u003d": "=", "\\u0060": "`",
+            "\\u002d": "-", "\\u0020": " ",
+        }
+        for key, val in mapping.items():
+            value = value.replace(key, val).replace(key.upper(), val)
+        return value
+
     def _normalize_generated_file_content(path: str, content: str) -> str:
         value = str(content or "").replace("\r\n", "\n")
+        value = _fix_overescaped_source(value)
         stripped = value.strip()
         if not stripped:
             return value
@@ -4404,15 +4420,22 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             return event
 
         system_prompt = (
-            "You are AREVEI's coding agent working directly on the user's real project files.\n"
-            "Rules:\n"
-            "- Use tools to inspect and modify files. Call read_file before editing an existing file.\n"
-            "- write_file must contain the COMPLETE new content of the file (never a diff or a fragment).\n"
-            "- Make minimal, correct edits and keep the existing code style.\n"
-            "- Never paste large code blocks into the chat; put code ONLY through write_file.\n"
-            "- If the request is ambiguous, ask ONE short clarifying question instead of guessing.\n"
-            "- When finished, reply with a concise 2-4 sentence summary of exactly what you changed and why.\n\n"
-            f"Workspace files ({len(file_list)}):\n" + "\n".join(file_list[:200])
+            "You are AREVEI's autonomous coding agent, similar to Cursor or Replit Agent, working "
+            "directly on the user's real project files. You take action — you do NOT ask the user what "
+            "they want when the request is already clear.\n\n"
+            "How to work:\n"
+            "- First call list_files (if you have not already) to understand the project, then read_file on the "
+            "files you will change BEFORE editing them.\n"
+            "- Make the change the user asked for by calling write_file with the COMPLETE new file content "
+            "(never a diff, never a fragment, never placeholder comments like '// rest of code').\n"
+            "- Write real, valid, runnable code that matches the project's existing framework and style.\n"
+            "- You may edit multiple files in one turn. Keep changes focused and correct.\n"
+            "- Only ask a clarifying question if the request is genuinely impossible to act on; otherwise make a "
+            "reasonable decision and proceed.\n"
+            "- Never paste code into the chat. Put code ONLY through write_file.\n"
+            "- When done, reply with a short, friendly 2-4 sentence summary describing exactly what you changed "
+            "and why — like a senior engineer handing off work.\n\n"
+            f"Project files ({len(file_list)}):\n" + "\n".join(file_list[:200])
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -4464,7 +4487,7 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                         doc = await _workspace_file(workspace_id, path)
                     result = (doc.get("content") or "")[:60000] if doc else json.dumps({"error": "file not found", "path": path})
                 elif fn == "write_file" and path:
-                    content = args.get("content", "")
+                    content = _normalize_generated_file_content(path, args.get("content", ""))
                     existing = files_by_path.get(path) or await _workspace_file(workspace_id, path)
                     old = existing.get("content", "") if existing else ""
                     original = existing.get("original_content", old) if existing else ""
