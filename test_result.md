@@ -156,18 +156,9 @@ test_plan:
 
 agent_communication:
     -agent: "main"
-    -message: |
-      Please run a FOCUSED, minimal backend test (keep LLM calls small to save cost).
-      Auth: founder@demo.com / Demo@1234 (see /app/memory/test_credentials.md).
-      Test only these:
-      1. GET /api/workspaces/ai/models -> returns 4 models + router_ready:true + default 'free'.
-      2. POST /api/projects/start {prompt,name} -> returns workspace with id.
-      3. POST /api/workspaces/{id}/ai/chat/stream (NDJSON stream), body {"message":"Create a file hello.txt with the text Hi","model":"free"}:
-         - stream contains file_edit_started AND file_edit_finished events with path 'hello.txt'
-         - stream ends with a result item whose files_changed includes hello.txt and status 'applied'
-      4. GET /api/workspaces/{id}/files/hello.txt -> content contains 'Hi' (persistence / single source of truth).
-      5. Model switching: repeat step 3 once with {"model":"cheap"} using a tiny prompt to confirm another provider works.
-      Use ONE small prompt per model to minimize token cost. Do NOT start Daytona sandboxes.
+    -message: "Implemented LiteLLM/OpenRouter router + cheap streaming agent replacing Codex SDK."
+    -agent: "testing"
+    -message: "All 6 focused backend tests PASSED. /api/workspaces/ai/models returns 4 models + router_ready. Streaming agent (free + cheap models) emits file_edit_started/finished with correct path, returns result status 'applied', files persist to workspace store. Model switching across providers works. No Daytona needed for edits. Backend re-architecture complete and functional."
     -agent: "testing"
     -message: |
       ✓ ALL BACKEND TESTS PASSED

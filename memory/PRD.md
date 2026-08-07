@@ -97,3 +97,14 @@ Future Content Agent evolution can split into internal Research, SEO, Outline, W
 1. Stripe integration when user confirms
 2. SSE streaming for AI chat
 3. Per-section "Ask AI" inline editor in Content Editor
+
+## ✅ Re-architecture (2025-07) — Cheap real-time coding agent
+- Replaced expensive OpenAI **Codex SDK** path with a **LiteLLM + OpenRouter** server-side agent (backend/model_router.py).
+- Model switching (UI picker + /api/workspaces/ai/models): free=GPT-OSS-20B, cheap=Gemini 2.5 Flash Lite, nim=NVIDIA Llama 3.1, coding=Claude Sonnet 4.5 (paid). Free tier verified tool-capable.
+- Workspace AI chat (POST /api/workspaces/{id}/ai/chat/stream) now streams live file_edit_started/finished events (by filename) + delta tokens, edits the Mongo workspace store directly (single source of truth for Monaco), and needs NO Daytona sandbox for edits. Daytona only needed for run/preview.
+- Codex path retained as fallback via payload.use_codex.
+- Backend validated by testing agent (6/6 focused tests passed).
+
+## ⏳ Pending (agreed with user)
+- Phase 2b: wake-on-demand sandbox optimization for preview/run only (lazy start, aggressive auto-stop).
+- Phase 3: Stripe payments + free/paid tier gating (premium models behind paid tier).
