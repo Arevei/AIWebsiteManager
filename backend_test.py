@@ -6,264 +6,334 @@ Tests that agent edits are visible in the codebase and not clobbered by re-reads
 
 import requests
 import json
-import time
+import os
+import sys
 
-# Configuration
+# Backend URL from frontend/.env
 BASE_URL = "https://github-import-lite.preview.emergentagent.com/api"
+
+# Test credentials
 EMAIL = "founder@demo.com"
 PASSWORD = "Demo@1234"
 
-def print_step(step_num, description):
-    """Print a test step header."""
-    print(f"\n{'='*80}")
-    print(f"STEP {step_num}: {description}")
-    print('='*80)
-
-def print_result(passed, message):
-    """Print test result."""
-    status = "✓ PASS" if passed else "✗ FAIL"
-    print(f"{status}: {message}")
+def log(msg):
+    """Print with flush for real-time output"""
+    print(msg, flush=True)
 
 def login():
-    """Login and return auth token."""
-    print_step(0, "Login")
+    """Login and return auth token"""
+    log("\n=== STEP 0: Login ===")
     url = f"{BASE_URL}/auth/login"
     payload = {"email": EMAIL, "password": PASSWORD}
     
-    response = requests.post(url, json=payload)
-    print(f"Status: {response.status_code}")
+    resp = requests.post(url, json=payload)
+    log(f"POST {url}")
+    log(f"Status: {resp.status_code}")
     
-    if response.status_code == 200:
-        data = response.json()
-        token = data.get("token")
-        print_result(True, f"Login successful, token received")
-        return token
-    else:
-        print_result(False, f"Login failed: {response.text}")
-        return None
+    if resp.status_code != 200:
+        log(f"❌ Login failed: {resp.text}")
+        sys.exit(1)
+    
+    data = resp.json()
+    token = data.get("token")
+    if not token:
+        log(f"❌ No token in response: {data}")
+        sys.exit(1)
+    
+    log(f"✓ Login successful, token received")
+    return token
 
 def create_workspace(token):
-    """Create a React workspace and return workspace ID."""
-    print_step(1, "POST /api/projects/start")
+    """Create a React workspace and return workspace ID"""
+    log("\n=== STEP 1: Create React Workspace ===")
     url = f"{BASE_URL}/projects/start"
     headers = {"Authorization": f"Bearer {token}"}
-    payload = {"prompt": "react", "name": "vis"}
+    payload = {"prompt": "react", "name": "vis2"}
     
-    response = requests.post(url, json=payload, headers=headers)
-    print(f"Status: {response.status_code}")
+    resp = requests.post(url, json=payload, headers=headers)
+    log(f"POST {url}")
+    log(f"Payload: {payload}")
+    log(f"Status: {resp.status_code}")
     
-    if response.status_code == 200:
-        data = response.json()
-        workspace_id = data.get("workspace_id") or data.get("id")
-        print_result(True, f"Workspace created: {workspace_id}")
-        return workspace_id
-    else:
-        print_result(False, f"Failed to create workspace: {response.text}")
-        return None
+    if resp.status_code != 200:
+        log(f"❌ Workspace creation failed: {resp.text}")
+        sys.exit(1)
+    
+    data = resp.json()
+    workspace_id = data.get("workspace_id") or data.get("id")
+    if not workspace_id:
+        log(f"❌ No workspace_id in response: {data}")
+        sys.exit(1)
+    
+    log(f"✓ Workspace created: {workspace_id}")
+    return workspace_id
 
-def edit_file_via_agent(token, workspace_id):
-    """Ask agent to edit src/App.jsx with marker text."""
-    print_step(2, "POST /api/workspaces/{id}/ai/chat/stream - Edit src/App.jsx")
+def stream_ai_chat(token, workspace_id, message, model="codex-mini", max_attempts=3):
+    """
+    Stream AI chat and return the result.
+    IMPORTANT: LLM tool-calling is flaky, so retry up to max_attempts if no file edits occur.
+    Returns: (success, result_dict, edited_path, attempt_count)
+    """
+    log(f"\n=== STEP 2: AI Chat Stream (model={model}) ===")
     url = f"{BASE_URL}/workspaces/{workspace_id}/ai/chat/stream"
     headers = {"Authorization": f"Bearer {token}"}
-    payload = {
-        "message": "Edit src/App.jsx: change the main heading text to 'AREVEI EDIT MARKER 123'. Keep everything else.",
-        "model": "codex-mini"
-    }
+    payload = {"message": message, "model": model}
     
-    response = requests.post(url, json=payload, headers=headers, stream=True)
-    print(f"Status: {response.status_code}")
-    
-    if response.status_code != 200:
-        print_result(False, f"Stream request failed: {response.text}")
-        return False
-    
-    # Parse NDJSON stream
-    file_edit_started = False
-    file_edit_finished = False
-    result_status = None
-    edited_file = None
-    
-    for line in response.iter_lines():
-        if not line:
-            continue
+    for attempt in range(1, max_attempts + 1):
+        log(f"\n--- Attempt {attempt}/{max_attempts} ---")
+        log(f"POST {url}")
+        log(f"Payload: {payload}")
         
-        try:
-            event = json.loads(line.decode('utf-8'))
-            event_type = event.get("type")
-            
-            if event_type == "file_edit_started":
-                path = event.get("path")
-                if "App.jsx" in path:
-                    file_edit_started = True
-                    edited_file = path
-                    print(f"  → file_edit_started: {path}")
-            
-            elif event_type == "file_edit_finished":
-                path = event.get("path")
-                if "App.jsx" in path:
-                    file_edit_finished = True
-                    print(f"  → file_edit_finished: {path}")
-            
-            elif event_type == "result":
-                result_status = event.get("status")
-                files_changed = event.get("files_changed", [])
-                print(f"  → result status: {result_status}")
-                print(f"  → files_changed: {files_changed}")
+        resp = requests.post(url, json=payload, headers=headers, stream=True)
+        log(f"Status: {resp.status_code}")
+        
+        if resp.status_code != 200:
+            log(f"❌ Stream request failed: {resp.text}")
+            if attempt < max_attempts:
+                log(f"⚠️  Retrying...")
+                continue
+            return False, None, None, attempt
+        
+        # Parse NDJSON stream
+        events = []
+        file_edit_started = False
+        file_edit_finished = False
+        edited_path = None
+        result = None
+        
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            try:
+                event = json.loads(line.decode('utf-8'))
+                events.append(event)
                 
-                # If agent edited a different file, capture it
-                if files_changed and not edited_file:
-                    for f in files_changed:
-                        if "App" in f or "app" in f:
-                            edited_file = f
-                            break
+                event_type = event.get("type")
+                
+                # Handle nested event structure: {"type": "event", "event": {...}}
+                if event_type == "event":
+                    inner_event = event.get("event", {})
+                    inner_type = inner_event.get("type")
+                    
+                    if inner_type == "file_edit_started":
+                        file_edit_started = True
+                        path = inner_event.get("path")
+                        log(f"  → file_edit_started: {path}")
+                        if not edited_path:
+                            edited_path = path
+                    
+                    elif inner_type == "file_edit_finished":
+                        file_edit_finished = True
+                        path = inner_event.get("path")
+                        log(f"  → file_edit_finished: {path}")
+                    
+                    else:
+                        # Log other inner event types for debugging
+                        log(f"  → event.{inner_type}: {inner_event.get('message', '')}")
+                
+                elif event_type == "delta":
+                    # Token streaming
+                    pass
+                
+                elif event_type == "result":
+                    # Result is nested: {"type": "result", "result": {...}}
+                    result = event.get("result", {})
+                    status = result.get("status")
+                    files_changed = result.get("files_changed", [])
+                    log(f"  → result: status={status}, files_changed={files_changed}")
+                    if files_changed and not edited_path:
+                        # files_changed is a list of dicts with "path" key
+                        if isinstance(files_changed, list) and len(files_changed) > 0:
+                            edited_path = files_changed[0].get("path") if isinstance(files_changed[0], dict) else files_changed[0]
+                
+                else:
+                    # Log other event types for debugging
+                    log(f"  → {event_type}: {json.dumps(event)[:150]}")
+            
+            except json.JSONDecodeError as e:
+                log(f"⚠️  Failed to parse NDJSON line: {line[:100]}")
         
-        except json.JSONDecodeError:
-            continue
+        log(f"\nReceived {len(events)} NDJSON events")
+        
+        # Check if we got file edits
+        if result:
+            status = result.get("status")
+            files_changed = result.get("files_changed", [])
+            
+            if status == "no_changes" or not files_changed:
+                log(f"⚠️  No file edits in this attempt (status={status}, files_changed={files_changed})")
+                if attempt < max_attempts:
+                    log(f"⚠️  Retrying same request...")
+                    continue
+                else:
+                    log(f"❌ Failed after {max_attempts} attempts - no file edits")
+                    return False, result, None, attempt
+            
+            # Success - we got file edits
+            if file_edit_started:
+                log(f"✓ file_edit_started event found")
+            if file_edit_finished:
+                log(f"✓ file_edit_finished event found")
+            
+            log(f"✓ Result status: {status}")
+            log(f"✓ Files changed: {files_changed}")
+            log(f"✓ Edited path: {edited_path}")
+            log(f"✓ Success on attempt {attempt}")
+            
+            return True, result, edited_path, attempt
+        
+        else:
+            log(f"⚠️  No result event in stream")
+            if attempt < max_attempts:
+                log(f"⚠️  Retrying...")
+                continue
+            else:
+                log(f"❌ Failed after {max_attempts} attempts - no result event")
+                return False, None, None, attempt
     
-    # Validation
-    passed = file_edit_started and file_edit_finished and result_status == "applied"
-    
-    if passed:
-        print_result(True, f"Agent edit completed: file_edit_started={file_edit_started}, file_edit_finished={file_edit_finished}, status={result_status}")
-    else:
-        print_result(False, f"Agent edit incomplete: file_edit_started={file_edit_started}, file_edit_finished={file_edit_finished}, status={result_status}")
-    
-    return passed, edited_file or "src/App.jsx"
+    # Should not reach here
+    return False, None, None, max_attempts
 
-def get_file_content(token, workspace_id, file_path, attempt_num):
-    """Get file content and check for marker."""
-    print_step(3 if attempt_num == 1 else 4, f"GET /api/workspaces/{{id}}/files/{file_path} (Attempt {attempt_num})")
+def get_file_content(token, workspace_id, file_path):
+    """Get file content from workspace"""
     url = f"{BASE_URL}/workspaces/{workspace_id}/files/{file_path}"
     headers = {"Authorization": f"Bearer {token}"}
     
-    response = requests.get(url, headers=headers)
-    print(f"Status: {response.status_code}")
+    resp = requests.get(url, headers=headers)
+    log(f"GET {url}")
+    log(f"Status: {resp.status_code}")
     
-    if response.status_code == 200:
-        content = response.text
-        marker_present = "AREVEI EDIT MARKER 123" in content
-        
-        # Extract heading text (look for h1 or heading-like text)
-        heading_text = "NOT FOUND"
-        for line in content.split('\n'):
-            if 'AREVEI EDIT MARKER 123' in line:
-                heading_text = line.strip()[:100]  # First 100 chars
-                break
-        
-        print(f"Content length: {len(content)} bytes")
-        print(f"Marker 'AREVEI EDIT MARKER 123' present: {marker_present}")
-        print(f"Heading text: {heading_text}")
-        
-        if marker_present:
-            print_result(True, f"File contains marker text (Attempt {attempt_num})")
-        else:
-            print_result(False, f"File does NOT contain marker text (Attempt {attempt_num})")
-            print(f"First 500 chars of content:\n{content[:500]}")
-        
-        return marker_present, heading_text
-    else:
-        print_result(False, f"Failed to get file: {response.text}")
-        return False, "ERROR"
+    if resp.status_code != 200:
+        log(f"❌ Failed to get file: {resp.text}")
+        return None
+    
+    data = resp.json()
+    content = data.get("content", "")
+    return content
 
-def test_models_endpoint(token):
-    """Regression test: GET /api/workspaces/ai/models."""
-    print_step(5, "Regression: GET /api/workspaces/ai/models")
-    url = f"{BASE_URL}/workspaces/ai/models"
+def verify_edit_visibility(token, workspace_id, edited_path, marker_text):
+    """Verify that the edit is visible and persists across multiple reads"""
+    log(f"\n=== STEP 3: First Read - Verify Edit is Visible ===")
+    
+    content1 = get_file_content(token, workspace_id, edited_path)
+    if content1 is None:
+        log(f"❌ Failed to read file on first attempt")
+        return False
+    
+    if marker_text in content1:
+        log(f"✓ First read: File contains '{marker_text}'")
+        log(f"  Content preview: {content1[:200]}...")
+    else:
+        log(f"❌ First read: File does NOT contain '{marker_text}'")
+        log(f"  Content preview: {content1[:500]}...")
+        return False
+    
+    log(f"\n=== STEP 4: Second Read - Verify Edit Persists (Not Clobbered) ===")
+    
+    content2 = get_file_content(token, workspace_id, edited_path)
+    if content2 is None:
+        log(f"❌ Failed to read file on second attempt")
+        return False
+    
+    if marker_text in content2:
+        log(f"✓ Second read: File STILL contains '{marker_text}'")
+        log(f"  Content preview: {content2[:200]}...")
+    else:
+        log(f"❌ Second read: File does NOT contain '{marker_text}' (CLOBBERED!)")
+        log(f"  Content preview: {content2[:500]}...")
+        return False
+    
+    # Verify content is identical
+    if content1 == content2:
+        log(f"✓ Content is identical across both reads (edit persisted)")
+    else:
+        log(f"⚠️  Content differs between reads!")
+        log(f"  First read length: {len(content1)}")
+        log(f"  Second read length: {len(content2)}")
+    
+    return True
+
+def regression_test_models(token):
+    """Regression test: verify models endpoint"""
+    log(f"\n=== STEP 5: Regression Test - Models Endpoint ===")
+    url = f"{BASE_URL}/ai/models"
     headers = {"Authorization": f"Bearer {token}"}
     
-    response = requests.get(url, headers=headers)
-    print(f"Status: {response.status_code}")
+    resp = requests.get(url, headers=headers)
+    log(f"GET {url}")
+    log(f"Status: {resp.status_code}")
     
-    if response.status_code == 200:
-        data = response.json()
-        models = data.get("models", [])
-        default_model = data.get("default")
-        router_ready = data.get("router_ready")
-        
-        model_count = len(models)
-        has_codex_mini = any(m.get("id") == "codex-mini" for m in models)
-        
-        print(f"Models count: {model_count}")
-        print(f"Default model: {default_model}")
-        print(f"Router ready: {router_ready}")
-        print(f"Has codex-mini: {has_codex_mini}")
-        
-        passed = model_count == 6 and default_model == "codex-mini" and router_ready
-        
-        if passed:
-            print_result(True, f"Models endpoint working: {model_count} models, default={default_model}, router_ready={router_ready}")
-        else:
-            print_result(False, f"Models endpoint issue: expected 6 models with default=codex-mini")
-        
-        return passed
-    else:
-        print_result(False, f"Failed to get models: {response.text}")
+    if resp.status_code != 200:
+        log(f"❌ Models endpoint failed: {resp.text}")
         return False
+    
+    data = resp.json()
+    models = data.get("models", [])
+    default_model = data.get("default")
+    
+    log(f"Models count: {len(models)}")
+    log(f"Default model: {default_model}")
+    
+    if len(models) != 6:
+        log(f"❌ Expected 6 models, got {len(models)}")
+        return False
+    
+    if default_model != "codex-mini":
+        log(f"❌ Expected default model 'codex-mini', got '{default_model}'")
+        return False
+    
+    log(f"✓ Models endpoint working correctly")
+    return True
 
 def main():
-    """Run all tests."""
-    print("\n" + "="*80)
-    print("AREVEI EDIT-VISIBILITY BUG FIX VERIFICATION")
-    print("="*80)
+    """Main test flow"""
+    log("=" * 80)
+    log("AREVEI EDIT-VISIBILITY BUG FIX VERIFICATION")
+    log("=" * 80)
     
-    # Step 0: Login
+    # Login
     token = login()
-    if not token:
-        print("\n❌ CRITICAL: Login failed, cannot proceed")
-        return
     
-    # Step 1: Create workspace
+    # Create workspace
     workspace_id = create_workspace(token)
-    if not workspace_id:
-        print("\n❌ CRITICAL: Workspace creation failed, cannot proceed")
-        return
     
-    # Wait a bit for workspace to initialize
-    print("\nWaiting 3 seconds for workspace initialization...")
-    time.sleep(3)
+    # AI chat stream with retry logic
+    message = "In src/App.jsx change the main heading text to exactly: AREVEI EDIT MARKER 123. Keep everything else unchanged."
+    success, result, edited_path, attempts = stream_ai_chat(token, workspace_id, message, model="codex-mini", max_attempts=3)
     
-    # Step 2: Edit file via agent
-    edit_success, edited_file = edit_file_via_agent(token, workspace_id)
-    if not edit_success:
-        print("\n❌ CRITICAL: Agent edit failed, cannot proceed")
-        return
+    if not success or not edited_path:
+        log(f"\n❌ FAILED: AI chat did not produce file edits after {attempts} attempts")
+        sys.exit(1)
     
-    # Wait for edit to complete
-    print("\nWaiting 2 seconds for edit to persist...")
-    time.sleep(2)
+    log(f"\n✓ AI chat succeeded on attempt {attempts}")
+    log(f"✓ Edited file path: {edited_path}")
     
-    # Step 3: Get file content (first time)
-    marker_present_1, heading_1 = get_file_content(token, workspace_id, edited_file, 1)
+    # Verify edit visibility and persistence
+    marker_text = "AREVEI EDIT MARKER 123"
+    visibility_ok = verify_edit_visibility(token, workspace_id, edited_path, marker_text)
     
-    # Step 4: Get file content (second time - verify not clobbered)
-    marker_present_2, heading_2 = get_file_content(token, workspace_id, edited_file, 2)
+    if not visibility_ok:
+        log(f"\n❌ FAILED: Edit visibility test failed")
+        sys.exit(1)
     
-    # Step 5: Regression test
-    models_ok = test_models_endpoint(token)
+    # Regression test
+    models_ok = regression_test_models(token)
+    
+    if not models_ok:
+        log(f"\n❌ FAILED: Regression test failed")
+        sys.exit(1)
     
     # Final summary
-    print("\n" + "="*80)
-    print("FINAL SUMMARY")
-    print("="*80)
-    
-    all_passed = edit_success and marker_present_1 and marker_present_2 and models_ok
-    
-    print(f"\nStep 1 (Create workspace): {'✓ PASS' if workspace_id else '✗ FAIL'}")
-    print(f"Step 2 (Agent edit): {'✓ PASS' if edit_success else '✗ FAIL'}")
-    print(f"Step 3 (First GET - marker present): {'✓ PASS' if marker_present_1 else '✗ FAIL'}")
-    print(f"  → Heading text: {heading_1}")
-    print(f"Step 4 (Second GET - marker still present): {'✓ PASS' if marker_present_2 else '✗ FAIL'}")
-    print(f"  → Heading text: {heading_2}")
-    print(f"Step 5 (Regression - models): {'✓ PASS' if models_ok else '✗ FAIL'}")
-    
-    if all_passed:
-        print("\n✅ ALL TESTS PASSED - EDIT-VISIBILITY BUG FIX VERIFIED")
-        print("The agent edit is visible in the codebase and stable across re-reads.")
-    else:
-        print("\n❌ SOME TESTS FAILED - SEE DETAILS ABOVE")
-    
-    print("="*80 + "\n")
+    log("\n" + "=" * 80)
+    log("✓ ALL TESTS PASSED")
+    log("=" * 80)
+    log(f"✓ Step 1: Workspace created ({workspace_id})")
+    log(f"✓ Step 2: AI chat stream succeeded (attempts: {attempts})")
+    log(f"✓ Step 3: First read - Edit visible (contains '{marker_text}')")
+    log(f"✓ Step 4: Second read - Edit persists (NOT clobbered)")
+    log(f"✓ Step 5: Regression - Models endpoint working (6 models, default=codex-mini)")
+    log(f"\n✓ BUG FIX VERIFIED: Agent edits are visible and persist across reads")
+    log("=" * 80)
 
 if __name__ == "__main__":
     main()

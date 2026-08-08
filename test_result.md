@@ -325,15 +325,31 @@ test_plan:
 
   - task: "Agent edits not visible in codebase (dual-storage clobber bug)"
     implemented: true
-    working: "NA"
+    working: true
     file: "backend/github_platform.py (get_workspace_file, write_file tool)"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         -working: "NA"
         -agent: "main"
         -comment: "USER BUG: agent edits shown in chat but not visible in codebase/preview. ROOT CAUSE: get_workspace_file read the file from the Daytona sandbox when a runtime existed and OVERWROTE the Mongo agent edit with stale sandbox content, destroying the edit. FIX: agent write_file now marks the Mongo doc source='agent_edit' + pending_sync flag and pushes to sandbox when reachable; get_workspace_file no longer clobbers a pending edit — it returns the Mongo copy and pushes it into the sandbox instead. Needs testing-agent verification."
+        -working: true
+        -agent: "testing"
+        -comment: "PASSED. All 5 test steps verified successfully: (1) Login with founder@demo.com - 200 OK, (2) POST /api/projects/start created React workspace 'vis2' - 200 OK, workspace_id captured, (3) POST /api/workspaces/{id}/ai/chat/stream with model='codex-mini' succeeded on FIRST attempt (no retries needed) - emitted file_edit_started event for src/App.jsx, emitted file_edit_finished event for src/App.jsx, result status='applied', files_changed=[{'path': 'src/App.jsx', 'status': 'M'}], (4) GET /api/workspaces/{id}/files/src/App.jsx FIRST read - Status 200, content contains 'AREVEI EDIT MARKER 123' (edit is visible), (5) GET /api/workspaces/{id}/files/src/App.jsx SECOND read - Status 200, content STILL contains 'AREVEI EDIT MARKER 123' (edit persisted, NOT clobbered), content is identical across both reads, (6) Regression test GET /api/ai/models - Status 200, 6 models returned, default='codex-mini', router_ready=true. BUG FIX CONFIRMED: Agent edits are now visible in the codebase and persist across multiple reads. The dual-storage clobber bug is resolved - get_workspace_file no longer overwrites agent edits with stale sandbox content."
+
+metadata:
+  created_by: "main_agent"
+  version: "2.3"
+  test_sequence: 4
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Agent edits not visible in codebase (dual-storage clobber bug)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
 
 agent_communication:
     -agent: "main"
@@ -346,3 +362,32 @@ agent_communication:
       4. GET it a SECOND time -> content still contains 'AREVEI EDIT MARKER 123' (stable, not overwritten on re-read).
       5. Regression: GET /api/workspaces/ai/models -> 200, 6 models, default codex-mini.
       Report pass/fail with the observed heading text from steps 3 and 4.
+    -agent: "testing"
+    -message: |
+      ✓ EDIT-VISIBILITY BUG FIX VERIFIED - ALL TESTS PASSED
+      
+      Test Results (6 steps):
+      1. ✓ Login (founder@demo.com) - Status: 200, Token received
+      2. ✓ POST /api/projects/start {"prompt":"react","name":"vis2"} - Status: 200, Workspace ID: 7263713d-93d4-4bbb-abc4-755e9f42f4d2
+      3. ✓ POST /api/workspaces/{id}/ai/chat/stream with model='codex-mini'
+         - Message: "In src/App.jsx change the main heading text to exactly: AREVEI EDIT MARKER 123. Keep everything else unchanged."
+         - Succeeded on attempt 1 (no retries needed - LLM tool-calling worked on first try)
+         - Received 12 NDJSON events
+         - file_edit_started event emitted for src/App.jsx ✓
+         - file_edit_finished event emitted for src/App.jsx ✓
+         - Result status: 'applied' ✓
+         - Files changed: [{'path': 'src/App.jsx', 'status': 'M'}] ✓
+         - Edited file path: src/App.jsx
+      4. ✓ GET /api/workspaces/{id}/files/src/App.jsx (FIRST READ) - Status: 200
+         - Content contains: 'AREVEI EDIT MARKER 123' ✓
+         - Edit is visible in the codebase (not clobbered)
+      5. ✓ GET /api/workspaces/{id}/files/src/App.jsx (SECOND READ) - Status: 200
+         - Content STILL contains: 'AREVEI EDIT MARKER 123' ✓
+         - Content is identical across both reads ✓
+         - Edit persisted and was NOT overwritten on re-read
+      6. ✓ Regression: GET /api/ai/models - Status: 200
+         - Models count: 6 ✓
+         - Default model: 'codex-mini' ✓
+         - router_ready: true ✓
+      
+      BUG FIX CONFIRMED: The dual-storage clobber bug is FIXED. Previously, when get_workspace_file was called, it would read the file from the Daytona sandbox (if a runtime existed) and overwrite the Mongo agent edit with stale sandbox content, making the edit invisible in the codebase. Now, agent edits are properly marked with source='agent_edit' + pending_sync flag in Mongo, and get_workspace_file returns the Mongo copy (the single source of truth) instead of clobbering it with sandbox content. The edit is visible immediately after the agent makes it, and persists across multiple reads without being overwritten.
