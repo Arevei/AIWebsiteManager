@@ -16,6 +16,7 @@ import Blogs from "./pages/admin/Blogs";
 
 import SuperAdmin from "./pages/super/SuperAdmin";
 import TenantSite from "./pages/site/TenantSite";
+import DemoBizSite from "./pages/site/DemoBizSite";
 import Home from "./pages/areveipage";
 
 function Protected({ children, role }) {
@@ -38,6 +39,7 @@ export default function App() {
               <Route path="/" element={<Home />} />
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<Signup />} />
+              <Route path="/demo/demobiz" element={<DemoBizSite />} />
               <Route path="/s/:slug" element={<TenantSite />} />
               <Route path="/admin" element={<Protected><Dashboard /></Protected>} />
               <Route path="/admin/dev" element={<Protected><DeveloperPlatform /></Protected>} />

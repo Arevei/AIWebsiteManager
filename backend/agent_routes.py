@@ -274,6 +274,8 @@ def build_agent_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 if source_image:
                     cloudinary = _upload_image_to_cloudinary(source_image, blog.get("slug", blog["id"]))
                     image_url = cloudinary.get("secure_url") or image_url
+                if _is_inline_image(image_url):
+                    image_url = ""
                 image_updates = {
                     "thumbnail_url": image_url,
                     "featured_image_url": image_url,

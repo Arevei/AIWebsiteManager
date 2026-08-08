@@ -32,6 +32,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from auth import current_user, decode_token
 from models import new_id, now_iso
+import model_router
 
 GITHUB_API = "https://api.github.com"
 MAX_INDEX_FILES = 120
@@ -613,8 +614,24 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             ),
         }
 
+    def _fix_overescaped_source(value: str) -> str:
+        """Some models emit over-escaped punctuation (e.g. \\u0027 instead of ')
+        when returning code inside JSON tool arguments. Decode the common ASCII
+        punctuation escapes so files are valid source, not literal escapes."""
+        if "\\u00" not in value:
+            return value
+        mapping = {
+            "\\u0027": "'", "\\u0022": '"', "\\u003c": "<", "\\u003e": ">",
+            "\\u0026": "&", "\\u002f": "/", "\\u003d": "=", "\\u0060": "`",
+            "\\u002d": "-", "\\u0020": " ",
+        }
+        for key, val in mapping.items():
+            value = value.replace(key, val).replace(key.upper(), val)
+        return value
+
     def _normalize_generated_file_content(path: str, content: str) -> str:
         value = str(content or "").replace("\r\n", "\n")
+        value = _fix_overescaped_source(value)
         stripped = value.strip()
         if not stripped:
             return value
@@ -2854,9 +2871,22 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         path = _clean_workspace_path(path)
         runtime = await _runtime_session(workspace_id, user)
         if runtime and runtime.get("provider") == "daytona" and runtime.get("capabilities", {}).get("filesystem"):
+            cached = await _workspace_file(workspace_id, path)
+            # If the agent edited this file but it is not yet in the sandbox, the
+            # Mongo copy is authoritative. Push it into the sandbox and return it —
+            # NEVER overwrite a pending edit with stale sandbox content.
+            if cached and cached.get("pending_sync"):
+                try:
+                    _daytona_write_workspace_file(runtime, path, cached.get("content", ""))
+                    await db.workspace_files.update_one(
+                        {"workspace_id": workspace_id, "path": path},
+                        {"$set": {"pending_sync": False, "updated_at": now_iso()}},
+                    )
+                except Exception:
+                    pass
+                return {"path": path, "content": cached.get("content", ""), "language": cached.get("language") or _language_for_path(path)}
             try:
                 doc = _daytona_read_workspace_file(runtime, path)
-                cached = await _workspace_file(workspace_id, path)
                 await db.workspace_files.update_one(
                     {"workspace_id": workspace_id, "path": path},
                     {"$set": {
@@ -3040,6 +3070,14 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
     async def reindex_workspace_knowledge(workspace_id: str, user=Depends(current_user)):
         await _workspace(workspace_id, user)
         return await _refresh_workspace_knowledge(workspace_id)
+
+    @r.get("/ai/models")
+    async def list_ai_models(user=Depends(current_user)):
+        return {
+            "models": model_router.public_models(),
+            "default": model_router.default_model(),
+            "router_ready": model_router.router_ready(),
+        }
 
     @r.get("/runtime/providers")
     async def runtime_providers(user=Depends(current_user)):
@@ -3409,12 +3447,84 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             "tenant_id": payload.get("tenant_id"),
         }
 
+    def _preview_waiting_html(title: str = "Preparing your preview", subtitle: str = "Waking up the workspace sandbox…") -> str:
+        return (
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/>"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
+            "<title>AREVEI · Preview</title>"
+            "<style>"
+            "*{box-sizing:border-box}html,body{height:100%;margin:0}"
+            "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+            "background:radial-gradient(1200px 600px at 50% -10%,#0b2b25 0%,#061012 55%,#04090a 100%);color:#e6fffa;"
+            "display:flex;align-items:center;justify-content:center;overflow:hidden}"
+            ".wrap{position:relative;text-align:center;padding:32px;max-width:520px;z-index:2}"
+            ".logo{width:64px;height:64px;margin:0 auto 22px;border-radius:18px;"
+            "background:linear-gradient(135deg,#32d6af,#0d9f7c);display:flex;align-items:center;justify-content:center;"
+            "box-shadow:0 0 40px rgba(50,214,175,.45);animation:pulse 1.8s ease-in-out infinite}"
+            ".logo svg{width:34px;height:34px}"
+            "h1{font-size:20px;font-weight:700;margin:0 0 8px;letter-spacing:-.01em}"
+            "p{margin:0;color:#8fb7ae;font-size:14px;line-height:1.5}"
+            ".bar{margin:26px auto 0;width:240px;height:6px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden}"
+            ".bar span{display:block;height:100%;width:40%;border-radius:99px;background:linear-gradient(90deg,#32d6af,#7af5db);"
+            "animation:slide 1.4s ease-in-out infinite}"
+            ".dots{margin-top:14px;font-size:12px;color:#5f857d;letter-spacing:.3em;text-transform:uppercase}"
+            ".orb{position:absolute;border-radius:50%;filter:blur(60px);opacity:.5;z-index:1}"
+            ".orb.a{width:340px;height:340px;background:#0d9f7c;top:-120px;left:-80px;animation:float 7s ease-in-out infinite}"
+            ".orb.b{width:300px;height:300px;background:#1f7fff33;bottom:-120px;right:-60px;animation:float 9s ease-in-out infinite reverse}"
+            "@keyframes pulse{0%,100%{transform:scale(1);box-shadow:0 0 40px rgba(50,214,175,.35)}"
+            "50%{transform:scale(1.08);box-shadow:0 0 60px rgba(50,214,175,.6)}}"
+            "@keyframes slide{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}"
+            "@keyframes float{0%,100%{transform:translate(0,0)}50%{transform:translate(20px,-24px)}}"
+            "</style></head><body>"
+            "<div class=\"orb a\"></div><div class=\"orb b\"></div>"
+            "<div class=\"wrap\">"
+            "<div class=\"logo\"><svg viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M12 2L2 21h20L12 2z\" fill=\"#04120f\"/></svg></div>"
+            f"<h1>{html.escape(title)}</h1>"
+            f"<p>{html.escape(subtitle)}</p>"
+            "<div class=\"bar\"><span></span></div>"
+            "<div class=\"dots\" id=\"msg\">Starting sandbox</div>"
+            "</div>"
+            "<script>"
+            "var msgs=['Starting sandbox','Booting dev server','Compiling app','Almost ready'];var i=0;"
+            "var el=document.getElementById('msg');"
+            "setInterval(function(){i=(i+1)%msgs.length;if(el)el.textContent=msgs[i];},2200);"
+            "setTimeout(function(){location.reload();},3500);"
+            "</script>"
+            "</body></html>"
+        )
+
+    def _wants_preview_html(request: Request, path: str) -> bool:
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept:
+            return True
+        last = path.rsplit("/", 1)[-1]
+        return path == "" or "." not in last
+
+    def _preview_waiting_response(request: Request, path: str, title: str, subtitle: str) -> Response:
+        if _wants_preview_html(request, path):
+            return Response(
+                content=_preview_waiting_html(title, subtitle),
+                media_type="text/html",
+                status_code=200,
+                headers={"Cache-Control": "no-store", "X-AREVEI-Preview": "warming"},
+            )
+        return Response(content=b"preview warming up", media_type="text/plain", status_code=503, headers={"Cache-Control": "no-store"})
+
+    def _is_daytona_daemon_error(status_code: int, body: bytes) -> bool:
+        if status_code in (502, 503, 504):
+            return True
+        try:
+            sample = body[:600].decode("utf-8", errors="ignore")
+        except Exception:
+            return False
+        return ("DAYTONA_DAEMON" in sample) or ("proxy upstream error" in sample and "statusCode" in sample)
+
     async def _proxy_workspace_preview_response(workspace_id: str, path: str, request: Request) -> Response:
         user = _preview_user_from_request(request)
         await _workspace(workspace_id, user)
         runtime = await _runtime_session(workspace_id, user)
         if not runtime:
-            raise HTTPException(404, "Runtime is not ready. Start the workspace runtime first.")
+            return _preview_waiting_response(request, path, "Starting your workspace", "Provisioning the preview runtime…")
         if (
             runtime.get("provider") == "daytona"
             and runtime.get("capabilities", {}).get("commands")
@@ -3429,9 +3539,9 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
             runtime = ensured.get("runtime") or runtime
         upstream_preview_url = runtime.get("direct_preview_url") or runtime.get("preview_url")
         if _is_preview_proxy_url(upstream_preview_url, workspace_id):
-            raise HTTPException(502, "Preview upstream is still pointing at the AREVEI proxy. Restart the dev preview to refresh the Daytona URL.")
+            return _preview_waiting_response(request, path, "Preparing your preview", "Refreshing the sandbox preview link…")
         if not runtime or not upstream_preview_url:
-            raise HTTPException(404, "Preview URL is not ready. Run the dev server first.")
+            return _preview_waiting_response(request, path, "Preparing your preview", "The dev server is starting up…")
         base_parts = urlsplit(upstream_preview_url)
         upstream_path = "/" + path.lstrip("/")
         base_query_map = parse_qs(base_parts.query, keep_blank_values=True)
@@ -3460,8 +3570,12 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                 timeout=30,
                 allow_redirects=True,
             )
-        except requests.RequestException as exc:
-            raise HTTPException(502, f"Preview upstream is not reachable: {str(exc)[:180]}")
+        except requests.RequestException:
+            return _preview_waiting_response(request, path, "Preview is waking up", "The sandbox was asleep and is starting again…")
+        # Never surface the raw Daytona daemon error (502 "proxy upstream error")
+        # to the iframe — show a branded waking-up page that auto-retries instead.
+        if _is_daytona_daemon_error(upstream.status_code, upstream.content):
+            return _preview_waiting_response(request, path, "Preview is waking up", "Your sandbox was asleep and is booting the app…")
         content_type = upstream.headers.get("content-type", "text/html")
         body = upstream.content
         if path.startswith(("@vite/", "@react-refresh", "src/")) and "text/html" in content_type:
@@ -3512,6 +3626,22 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
     @r.api_route("/workspaces/{workspace_id}/runtime/preview-proxy/{path:path}", methods=["GET", "HEAD"])
     async def proxy_workspace_preview_path(workspace_id: str, path: str, request: Request):
         return await _proxy_workspace_preview_response(workspace_id, path, request)
+
+    @r.post("/workspaces/{workspace_id}/runtime/keepalive")
+    async def keepalive_workspace_runtime(workspace_id: str, user=Depends(current_user)):
+        """Called periodically by the UI while a workspace/preview is open so the
+        Daytona sandbox does not auto-sleep. Pinging the direct preview URL resets
+        Daytona's idle auto-stop timer cheaply (no command execution)."""
+        await _workspace(workspace_id, user)
+        runtime = await _runtime_session(workspace_id, user)
+        url = runtime.get("direct_preview_url") if runtime else None
+        if not url or _is_preview_proxy_url(url, workspace_id):
+            return {"ok": True, "awake": False}
+        try:
+            requests.get(url, timeout=8, headers={"x-daytona-skip-preview-warning": "true"})
+            return {"ok": True, "awake": True}
+        except Exception:
+            return {"ok": True, "awake": False}
 
     @r.post("/workspaces/{workspace_id}/runtime/stop")
     async def stop_workspace_runtime(workspace_id: str, user=Depends(current_user)):
@@ -4150,13 +4280,292 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
         ]
         return change
 
+    def _agent_tools_schema() -> list[dict]:
+        return [
+            {"type": "function", "function": {
+                "name": "list_files",
+                "description": "List all file paths in the workspace so you understand the project structure.",
+                "parameters": {"type": "object", "properties": {}},
+            }},
+            {"type": "function", "function": {
+                "name": "read_file",
+                "description": "Read the full text content of one file in the workspace.",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+            }},
+            {"type": "function", "function": {
+                "name": "write_file",
+                "description": "Create or overwrite a file. Always pass the COMPLETE new file content, not a diff.",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]},
+            }},
+            {"type": "function", "function": {
+                "name": "run_command",
+                "description": "Run a shell command in the workspace runtime. Only works when a sandbox is running.",
+                "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]},
+            }},
+        ]
+
+    def _chunk_text(text: str, size: int = 24):
+        for i in range(0, len(text), size):
+            yield text[i:i + size]
+
+    def _tool_call_parts(call: Any) -> tuple[str, str, str]:
+        if isinstance(call, dict):
+            fn = call.get("function", {}) or {}
+            return call.get("id") or new_id(), fn.get("name") or "", fn.get("arguments") or "{}"
+        fn = getattr(call, "function", None)
+        return (
+            getattr(call, "id", None) or new_id(),
+            getattr(fn, "name", "") if fn else "",
+            getattr(fn, "arguments", "{}") if fn else "{}",
+        )
+
+    async def _finalize_local_agent_turn(workspace, user, message, model_name, user_message,
+                                         assistant_message, touched, run_outputs, events,
+                                         attachments, plan_markdown, effort):
+        workspace_id = workspace["id"]
+        diffs: list[dict] = []
+        files_changed: list[dict] = []
+        for path, info in touched.items():
+            if info["old"] == info["new"]:
+                continue
+            diff = _make_normalized_diff(path, info["old"], info["new"])
+            diff["patch_source"] = "litellm_agent"
+            diff["sandbox_applied"] = False
+            diffs.append(diff)
+            files_changed.append({"path": path, "status": info["status"]})
+        if files_changed:
+            events.append(_stream_event("git_changed", f"{len(files_changed)} file(s) changed.", files=files_changed))
+            first_path = files_changed[0]["path"]
+            await db.workspace_sessions.update_one(
+                {"id": workspace_id},
+                {"$set": {"active_file_path": first_path, "updated_at": now_iso()}},
+            )
+            events.append(_stream_event("open_file", f"Opening {first_path}.", path=first_path))
+        events.append(_stream_event("agent_finished", "Done. Review the diff, then commit or revert from Git controls."))
+        change = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "workspace_id": workspace_id,
+            "project_id": workspace.get("project_id"),
+            "chat_id": workspace.get("chat_id"),
+            "repo_id": workspace["repo_id"],
+            "user_id": user["user_id"],
+            "prompt": message,
+            "assistant_message": assistant_message,
+            "model": model_name,
+            "effort": effort,
+            "changes": diffs,
+            "files_changed": files_changed,
+            "attachments": attachments or [],
+            "plan_markdown": plan_markdown,
+            "patch": "",
+            "events": events,
+            "command_output": "\n\n".join(run_outputs)[:8000],
+            "status": "applied" if files_changed else "no_changes",
+            "applied_at": now_iso() if files_changed else None,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        await db.ai_change_sets.insert_one(change)
+        assistant_doc = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "workspace_id": workspace_id,
+            "project_id": workspace.get("project_id"),
+            "chat_id": workspace.get("chat_id"),
+            "repo_id": workspace["repo_id"],
+            "user_id": user["user_id"],
+            "role": "assistant",
+            "content": assistant_message,
+            "change_set_id": change["id"],
+            "model": model_name,
+            "effort": effort,
+            "changed_files": [c["path"] for c in files_changed],
+            "attachments": attachments or [],
+            "plan_markdown": plan_markdown,
+            "events": events,
+            "created_at": now_iso(),
+        }
+        await db.workspace_chat_messages.insert_one(assistant_doc)
+        summary = ", ".join([c["path"] for c in files_changed[:6]]) or "none"
+        await _append_workspace_activity(workspace, f"Agent changed {len(files_changed)} file(s): {summary}.")
+        change.pop("_id", None)
+        change["messages"] = [
+            {k: v for k, v in user_message.items() if k != "_id"},
+            {k: v for k, v in assistant_doc.items() if k != "_id"},
+        ]
+        return change
+
+    async def _stream_litellm_workspace_agent(workspace, message, enriched_message, user,
+                                              model_name, effort, attachments, plan_markdown):
+        workspace_id = workspace["id"]
+        friendly, model_slug, _note = model_router.resolve_model(model_name, tier="paid")
+
+        user_message = {
+            "id": new_id(),
+            "tenant_id": user["tenant_id"],
+            "workspace_id": workspace_id,
+            "project_id": workspace.get("project_id"),
+            "chat_id": workspace.get("chat_id"),
+            "repo_id": workspace["repo_id"],
+            "user_id": user["user_id"],
+            "role": "user",
+            "content": message,
+            "attachments": attachments,
+            "plan_markdown": plan_markdown,
+            "effort": effort,
+            "created_at": now_iso(),
+        }
+        await db.workspace_chat_messages.insert_one(user_message)
+
+        files = await _active_files(workspace_id)
+        files_by_path: dict[str, dict] = {f["path"]: f for f in files if f.get("path")}
+        file_list = [p for p in files_by_path.keys()][:400]
+        runtime = await _runtime_session(workspace_id, user)
+
+        events: list[dict] = []
+        touched: dict[str, dict] = {}
+        run_outputs: list[str] = []
+
+        def ev(kind, msg, **extra):
+            event = _stream_event(kind, msg, **extra)
+            events.append(event)
+            return event
+
+        system_prompt = (
+            "You are AREVEI's autonomous coding agent, similar to Cursor or Replit Agent, working "
+            "directly on the user's real project files. You take action — you do NOT ask the user what "
+            "they want when the request is already clear.\n\n"
+            "How to work:\n"
+            "- First call list_files (if you have not already) to understand the project, then read_file on the "
+            "files you will change BEFORE editing them.\n"
+            "- Make the change the user asked for by calling write_file with the COMPLETE new file content "
+            "(never a diff, never a fragment, never placeholder comments like '// rest of code').\n"
+            "- Write real, valid, runnable code that matches the project's existing framework and style.\n"
+            "- You may edit multiple files in one turn. Keep changes focused and correct.\n"
+            "- Only ask a clarifying question if the request is genuinely impossible to act on; otherwise make a "
+            "reasonable decision and proceed.\n"
+            "- Never paste code into the chat. Put code ONLY through write_file.\n"
+            "- When done, reply with a short, friendly 2-4 sentence summary describing exactly what you changed "
+            "and why — like a senior engineer handing off work.\n\n"
+            f"Project files ({len(file_list)}):\n" + "\n".join(file_list[:200])
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": enriched_message},
+        ]
+        tools = _agent_tools_schema()
+
+        yield {"type": "event", "event": ev("agent_started", f"Thinking with {friendly}...")}
+        await asyncio.sleep(0)
+
+        final_text = ""
+        clarifying = False
+        for _step in range(8):
+            try:
+                resp = await model_router.acompletion(model_slug, messages, tools=tools, tool_choice="auto")
+            except Exception as exc:
+                yield {"type": "error", "detail": f"Model call failed: {exc}"}
+                return
+            choice = resp.choices[0]
+            assistant = model_router.message_to_dict(choice.message)
+            messages.append(assistant)
+            tool_calls = assistant.get("tool_calls") or []
+            if not tool_calls:
+                final_text = assistant.get("content") or ""
+                clarifying = not touched
+                break
+            for call in tool_calls:
+                call_id, fn, raw_args = _tool_call_parts(call)
+                try:
+                    args = json.loads(raw_args or "{}")
+                except Exception:
+                    args = {}
+                path = _clean_workspace_path(args.get("path", "")) if args.get("path") else None
+
+                if fn == "write_file" and path:
+                    yield {"type": "event", "event": ev("file_edit_started", f"Editing {path}", path=path)}
+                elif fn == "read_file" and path:
+                    yield {"type": "event", "event": ev("open_file", f"Reading {path}", path=path)}
+                elif fn == "run_command":
+                    yield {"type": "event", "event": ev("tool_started", f"Running: {args.get('command', '')}", command=args.get("command", ""))}
+                await asyncio.sleep(0)
+
+                # --- execute tool ---
+                if fn == "list_files":
+                    result = json.dumps({"files": file_list})
+                elif fn == "read_file":
+                    doc = files_by_path.get(path) if path else None
+                    if not doc and path:
+                        doc = await _workspace_file(workspace_id, path)
+                    result = (doc.get("content") or "")[:60000] if doc else json.dumps({"error": "file not found", "path": path})
+                elif fn == "write_file" and path:
+                    content = _normalize_generated_file_content(path, args.get("content", ""))
+                    existing = files_by_path.get(path) or await _workspace_file(workspace_id, path)
+                    old = existing.get("content", "") if existing else ""
+                    original = existing.get("original_content", old) if existing else ""
+                    await _upsert_workspace_file(workspace_id, path, content, original=original if existing else "")
+                    await _ensure_tree_file(workspace, path)
+                    files_by_path[path] = {"path": path, "content": content, "language": _language_for_path(path)}
+                    if path not in file_list:
+                        file_list.append(path)
+                    prev = touched.get(path, {})
+                    touched[path] = {"old": prev.get("old", old), "new": content, "status": "M" if existing else "A"}
+                    # Keep the sandbox (the real codebase) in sync so the edit is
+                    # visible in preview/commit. If the sandbox is not reachable,
+                    # mark pending_sync so get_workspace_file / runtime start pushes it.
+                    synced = False
+                    if runtime and runtime.get("provider") == "daytona" and runtime.get("provider_runtime_id"):
+                        try:
+                            _daytona_write_workspace_file(runtime, path, content)
+                            synced = True
+                        except Exception:
+                            synced = False
+                    await db.workspace_files.update_one(
+                        {"workspace_id": workspace_id, "path": path},
+                        {"$set": {"source": "agent_edit", "pending_sync": (not synced), "updated_at": now_iso()}},
+                    )
+                    result = json.dumps({"ok": True, "path": path, "bytes": len(content)})
+                    yield {"type": "event", "event": ev("file_edit_finished", f"Updated {path}", path=path, status="M")}
+                elif fn == "run_command":
+                    cmd = (args.get("command") or "").strip()
+                    if not (runtime and runtime.get("provider") == "daytona" and runtime.get("provider_runtime_id")):
+                        result = json.dumps({"error": "No sandbox is running. Ask the user to click Start runtime for commands or preview."})
+                    else:
+                        try:
+                            active = await _active_files(workspace_id)
+                            res = _daytona_run_command(runtime, active, cmd)
+                            out = (res.get("output") or "")[:6000]
+                            run_outputs.append(f"$ {cmd}\n{out}")
+                            result = json.dumps({"exit_code": res.get("exit_code"), "output": out})
+                        except Exception as exc:
+                            result = json.dumps({"error": str(exc)})
+                    yield {"type": "event", "event": ev("command_output", "Command finished.", command=(args.get("command") or ""), output=result[:2000])}
+                else:
+                    result = json.dumps({"error": f"unknown tool {fn}"})
+
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": result})
+                await asyncio.sleep(0)
+
+        if not final_text:
+            final_text = "I applied the requested changes." if touched else "I reviewed the workspace but did not need to change any files."
+        for chunk in _chunk_text(final_text):
+            yield {"type": "delta", "text": chunk}
+            await asyncio.sleep(0)
+
+        result = await _finalize_local_agent_turn(
+            workspace, user, message, friendly, user_message, final_text,
+            {} if clarifying else touched, run_outputs, events, attachments, plan_markdown, effort,
+        )
+        yield {"type": "result", "result": result}
+
     @r.post("/workspaces/{workspace_id}/ai/chat/stream")
     async def workspace_ai_chat_stream(workspace_id: str, payload: dict, user=Depends(current_user)):
         async def stream():
             def line(data: dict) -> bytes:
                 return (json.dumps(data, default=str) + "\n").encode("utf-8")
 
-            started = _stream_event("agent_started", "Starting Daytona Codex workflow.")
+            started = _stream_event("agent_started", "Starting AI coding agent.")
             yield line({"type": "event", "event": started})
             await asyncio.sleep(0)
             try:
@@ -4182,6 +4591,20 @@ def build_github_platform_router(db: AsyncIOMotorDatabase) -> APIRouter:
                     yield line({"type": "event", "event": plan_event})
                     yield line({"type": "plan", "markdown": plan_markdown})
                 enriched_message += _attachment_context(attachments)
+
+                # --- Primary path: cheap LiteLLM/OpenRouter server-side agent ---
+                # Edits the workspace file store directly (single source of truth for
+                # the editor), streams live file-edit events, and does NOT require a
+                # running sandbox. Replaces the expensive Codex-SDK-in-Daytona path.
+                if model_router.router_ready() and not payload.get("use_codex"):
+                    async for item in _stream_litellm_workspace_agent(
+                        workspace, message, enriched_message, user,
+                        payload.get("model"), effort, attachments, plan_markdown,
+                    ):
+                        yield line(item)
+                        await asyncio.sleep(0)
+                    return
+
                 runtime = await _runtime_session(workspace_id, user)
                 runtime = await _upgrade_runtime_to_current_provider(runtime, workspace_id) if runtime else None
                 runner = CodexDaytonaAgentRunner(runtime, selected_model) if runtime else None

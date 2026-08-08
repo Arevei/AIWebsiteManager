@@ -49,7 +49,7 @@ import {
   TrendUp,
   X,
 } from "@phosphor-icons/react";
-import { API, api, getToken, withPreviewAuth } from "../../lib/api";
+import { API, api, getToken } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useTheme } from "../../lib/theme";
 
@@ -63,15 +63,64 @@ const ADMIN_NAV = [
   { to: "/admin?view=settings", label: "Settings", icon: GearSix },
 ];
 const AREVEI_LOGO = "/arevei-logo-mark.png";
+const DEMO_SITE_URL = "/demo/demobiz";
+const DEMO_PREVIEW_HTML = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * { box-sizing: border-box; } body { margin: 0; font-family: Inter, Arial, sans-serif; background: #071016; color: white; }
+    header { height: 74px; display: flex; align-items: center; justify-content: space-between; padding: 0 42px; border-bottom: 1px solid rgba(255,255,255,.1); background: rgba(7,16,22,.94); position: sticky; top: 0; z-index: 2; }
+    .brand { display: flex; align-items: center; gap: 12px; font-size: 25px; font-weight: 900; letter-spacing: -.04em; }
+    .dot { width: 16px; height: 16px; border-radius: 999px; background: #c7ff4a; }
+    nav { display: flex; gap: 28px; font-size: 13px; font-weight: 700; color: rgba(255,255,255,.68); }
+    .cta { background: #c7ff4a; color: #050505; padding: 13px 20px; border-radius: 12px; font-weight: 900; }
+    .hero { min-height: 620px; padding: 82px 48px; background: radial-gradient(circle at 76% 24%, rgba(199,255,74,.2), transparent 34%), linear-gradient(135deg,#071016,#0d2627 58%,#101813); display: grid; grid-template-columns: 1.04fr .96fr; gap: 48px; align-items: center; }
+    .pill { display: inline-flex; border: 1px solid rgba(199,255,74,.45); color: #c7ff4a; border-radius: 999px; padding: 8px 14px; font-weight: 800; font-size: 13px; }
+    h1 { margin: 26px 0 0; font-size: clamp(48px, 8vw, 84px); line-height: .95; letter-spacing: -.06em; max-width: 780px; }
+    h1 span { color: #c7ff4a; } p { color: rgba(255,255,255,.66); line-height: 1.75; font-size: 18px; max-width: 660px; }
+    .buttons { display: flex; gap: 12px; margin-top: 34px; } .btn { padding: 16px 24px; border-radius: 12px; font-weight: 900; border: 1px solid rgba(255,255,255,.2); } .btn.primary { background: #c7ff4a; color: #050505; border: 0; }
+    .dashboard { border: 1px solid rgba(255,255,255,.14); border-radius: 28px; background: rgba(255,255,255,.06); padding: 16px; box-shadow: 0 30px 80px rgba(0,0,0,.28); }
+    .panel { background: #f8fbf8; color: #101513; border-radius: 22px; padding: 22px; }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; font-weight: 900; margin-bottom: 18px; }
+    .live { background: #c7ff4a; padding: 6px 10px; border-radius: 999px; font-size: 12px; }
+    .cards { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+    .card { border: 1px solid rgba(0,0,0,.08); border-radius: 18px; padding: 18px; background: white; }
+    .metric { height: 112px; margin-top: 14px; border-radius: 16px; display: grid; place-items: center; background: linear-gradient(135deg,#eef4f6,#fff); font-size: 30px; font-weight: 900; }
+    .metric.health { background: radial-gradient(circle,#fff 45%,#74c476 47% 65%,#dce8df 67%); }
+    section { padding: 76px 48px; } h2 { font-size: 42px; letter-spacing: -.04em; margin: 0 0 28px; }
+    .services { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; } .service { border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.045); border-radius: 22px; padding: 24px; }
+    .blog-feature { display: grid; grid-template-columns: .9fr 1.1fr; overflow: hidden; border: 1px solid rgba(255,255,255,.12); border-radius: 28px; background: #fbfbf4; color: #101513; }
+    .blog-visual { min-height: 330px; padding: 28px; background: radial-gradient(circle at 34% 30%,rgba(199,255,74,.72),transparent 22%),linear-gradient(135deg,#102226,#dff4f1); }
+    .blog-card { background: rgba(255,255,255,.9); border-radius: 20px; padding: 20px; box-shadow: 0 24px 60px rgba(0,0,0,.18); }
+    .blog-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding: 13px 14px; border: 1px solid rgba(0,0,0,.08); border-radius: 14px; background: white; font-weight: 900; }
+    .blog-copy { padding: 34px; } .eyebrow { color: #007f70; font-size: 12px; font-weight: 900; letter-spacing: .2em; text-transform: uppercase; }
+    .blog-copy h3 { margin: 14px 0 0; font-size: 38px; line-height: 1.04; letter-spacing: -.045em; }
+    .blog-copy p { color: rgba(0,0,0,.68); font-size: 16px; line-height: 1.75; }
+    @media (max-width: 820px) { nav { display: none; } header { padding: 0 22px; } .hero { grid-template-columns: 1fr; padding: 56px 24px; } .services { grid-template-columns: 1fr; } section { padding: 56px 24px; } }
+    @media (max-width: 820px) { .blog-feature { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header><div class="brand"><span class="dot"></span>DemoBiz</div><nav><span>Services</span><span>Results</span><span>Blog</span><span>Contact</span></nav><div class="cta">Get In Touch</div></header>
+  <main>
+    <div class="hero">
+      <div><div class="pill">We help brands grow</div><h1>We build digital experiences that <span>drive growth</span></h1><p>DemoBiz helps growing businesses turn their websites into measurable lead systems with clear messaging, useful content, and practical conversion strategy.</p><div class="buttons"><div class="btn primary">Our Services</div><div class="btn">See Results</div></div></div>
+      <div class="dashboard"><div class="panel"><div class="panel-head"><span>Growth dashboard</span><span class="live">Live</span></div><div class="cards"><div class="card">Website Health<div class="metric health">88</div></div><div class="card">Content Growth<div class="metric">+42%</div></div><div class="card">Qualified Leads<div class="metric">126</div></div><div class="card">SEO Visibility<div class="metric">+31%</div></div></div></div></div>
+    </div>
+    <section><h2>A complete website growth system</h2><div class="services"><div class="service"><h3>Website Strategy</h3><p>Conversion-focused page structure, messaging, and SEO foundations.</p></div><div class="service"><h3>Growth Content</h3><p>Useful blogs, landing pages, and lead magnets built around search intent.</p></div><div class="service"><h3>Lead Systems</h3><p>Clear calls to action, forms, analytics, and follow-up journeys.</p></div></div></section>
+    <section><div class="eyebrow">Blog</div><h2>Fixed demo blog included</h2><article class="blog-feature"><div class="blog-visual"><div class="blog-card"><div class="eyebrow">DemoBiz content engine</div><div class="blog-row"><span>Message clarity</span><span>Live</span></div><div class="blog-row"><span>Useful blog topic</span><span>Ready</span></div><div class="blog-row"><span>SEO intent</span><span>Ready</span></div><div class="blog-row"><span>Lead call to action</span><span>Ready</span></div></div></div><div class="blog-copy"><div class="eyebrow">Featured demo blog</div><h3>How DemoBiz Turns Website Visits Into Qualified Leads</h3><p>Most small business websites do not fail because they look bad. They fail because visitors cannot quickly understand what the business does, why it matters, and what to do next.</p><p>DemoBiz fixes that by treating the website as a lead system. The homepage introduces the offer in plain language. Service pages explain outcomes, and blog content answers the questions buyers already search for.</p><p>A good growth website is a living system: publish useful content, watch which pages attract qualified visitors, improve the call to action, and repeat.</p></div></article></section>
+  </main>
+</body>
+</html>`;
 const CODE_MODELS = [
-  { id: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-  { id: "gpt-5.5", label: "GPT-5.5" },
-  { id: "gpt-5.4", label: "GPT-5.4" },
-  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-  { id: "gpt-5.2", label: "GPT-5.2" },
+  { id: "codex-mini", label: "Codex Mini · GPT-5.4 Mini" },
+  { id: "codex", label: "Codex · GPT-5.5" },
+  { id: "coding", label: "Pro Coder · Claude Sonnet 4.5" },
+  { id: "cheap", label: "Fast · Gemini 2.5 Flash Lite" },
+  { id: "free", label: "Free · GPT-OSS 20B" },
+  { id: "nim", label: "NVIDIA NIM · Llama 3.1" },
 ];
 
 function encodePath(path) {
@@ -718,8 +767,7 @@ export default function DeveloperPlatform() {
   const [activePlan, setActivePlan] = useState("");
   const [diffReview, setDiffReview] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("gpt-5.5");
+  const [selectedModel, setSelectedModel] = useState("codex-mini");
   const p = palette(theme);
 
   const currentTitle = useMemo(
@@ -733,9 +781,8 @@ export default function DeveloperPlatform() {
   );
   const workspaceUsage = Math.min(100, Math.round((recentWorkspaces.length / 20) * 100));
   const agentUsage = Math.min(100, Math.round((messages.filter((item) => item.role === "agent").length / 50) * 100));
-  const visiblePreviewUrl = withPreviewAuth(runtime?.preview_url || "");
-  const codexReady = runtime?.provider === "daytona" && runtime?.codex_agent_status === "ready";
-  const runtimeLabel = codexReady ? "Daytona Codex ready" : runtime?.provider ? `${runtime.provider} ${runtime.status || "runtime"}` : "Runtime not started";
+  const codexReady = true; // Cloud AI agent (OpenRouter router) runs server-side; no Daytona/Codex needed for edits.
+  const runtimeLabel = runtime?.provider ? `${runtime.provider} ${runtime.status || "runtime"}` : "Cloud AI agent ready";
 
   useEffect(() => {
     localStorage.setItem("arevei_sidebar_open", String(sidebarOpen));
@@ -756,6 +803,7 @@ export default function DeveloperPlatform() {
         setProject(currentRes.data.project || null);
         setChat(currentRes.data.chat || null);
         setScreen("workspace");
+        if (window.innerWidth < 1280) setSidebarOpen(false);
         refreshWorkspace(currentRes.data.workspace.id);
       }
     } catch (e) { }
@@ -1445,51 +1493,8 @@ export default function DeveloperPlatform() {
     window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
   };
 
-  const ensurePreview = useCallback(async () => {
-    if (!workspace?.id || previewLoading) return;
-    setPreviewLoading(true);
-    setAgentStatus("Starting preview workspace...");
-    try {
-      if (!runtime) {
-        const config = workspace.runtime_config || {};
-        await api.post(`/workspaces/${workspace.id}/runtime/start`, {
-          install_command: config.install_command,
-          dev_command: config.dev_command,
-          build_command: config.build_command,
-          test_command: config.test_command,
-          lint_command: config.lint_command,
-        });
-      }
-      setAgentStatus(`Opening preview with ${runtime?.dev_command || workspace.runtime_config?.dev_command || "npm run dev"}...`);
-      const res = await api.post(`/workspaces/${workspace.id}/runtime/ensure-preview`);
-      setRuntime(res.data.runtime || null);
-      setRuntimeLogs(res.data.logs || []);
-      if (res.data.status !== "preview_ready") {
-        await refreshWorkspace(workspace.id);
-      }
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Could not start preview");
-      await refreshWorkspace(workspace.id);
-    } finally {
-      setAgentStatus("");
-      setPreviewLoading(false);
-    }
-  // refreshWorkspace intentionally stays outside the dependency list because it
-  // is recreated on each render and would retrigger preview warm-up loops.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewLoading, runtime, workspace]);
-
-  useEffect(() => {
-    if (screen !== "workspace" || rightView !== "preview" || !workspace?.id) return;
-    if (runtime?.preview_url || previewLoading) return;
-    ensurePreview();
-  }, [ensurePreview, previewLoading, rightView, runtime?.preview_url, screen, workspace?.id]);
-
   const handleSetRightView = (view) => {
     setRightView(view);
-    if (view === "preview") {
-      ensurePreview();
-    }
   };
 
   const connectVercel = async () => {
@@ -1692,7 +1697,7 @@ export default function DeveloperPlatform() {
           </header>
 
           <div className="flex min-h-0 flex-1">
-            <section className={cx("flex w-[390px] min-w-0 shrink-0 flex-col overflow-hidden border-r", p.side)}>
+            <section className={cx("hidden w-[320px] min-w-0 shrink-0 flex-col overflow-hidden border-r 2xl:flex", p.side)}>
               <div className="shrink-0 px-3 pt-3">
                 <div className={cx("mb-3 rounded-lg border p-3 text-xs", codexReady ? "border-[#0d9f7c55] bg-[#0d9f7c0d] text-[#0d9f7c]" : p.panelSoft)}>
                   <div className="flex items-center justify-between gap-3">
@@ -1746,7 +1751,7 @@ export default function DeveloperPlatform() {
               </div>
             </section>
 
-            <section className={cx("flex w-[300px] shrink-0 flex-col border-r", p.side)}>
+            <section className={cx("flex w-[220px] shrink-0 flex-col border-r xl:w-[260px] 2xl:w-[300px]", p.side)}>
               <div className={cx("flex h-11 items-center gap-4 border-b px-4", p.side, p.muted)}>
                 <button title="Explorer" onClick={() => setFileSearchOpen(false)} className={cx("grid h-8 w-8 place-items-center rounded", !fileSearchOpen && p.active)}><Folder size={19} /></button>
                 <button title="Search files" onClick={() => setFileSearchOpen((value) => !value)} className={cx("grid h-8 w-8 place-items-center rounded", fileSearchOpen && p.active)}><MagnifyingGlass size={19} /></button>
@@ -1802,7 +1807,7 @@ export default function DeveloperPlatform() {
               )}
             </section>
 
-            <section className="flex min-w-0 flex-1 flex-col">
+            <section className="flex min-w-[520px] flex-1 flex-col">
               <div className={cx("flex h-11 items-center justify-between border-b px-4", p.side)}>
                 <div className={cx("flex items-center gap-1 rounded-md border p-1", p.panelSoft)}>
                   {[["preview", Eye], ["editor", Code], ["logs", Terminal], ["diffs", List]].map(([view, Icon]) => (
@@ -1829,52 +1834,23 @@ export default function DeveloperPlatform() {
 
               <div className={cx("min-h-0 flex-1", p.codeBg)}>
                 {rightView === "preview" ? (
-                  previewLoading ? (
-                    <div className="flex h-full items-center justify-center p-6">
-                      <div className={cx("w-full max-w-md rounded-lg border p-5 text-center", p.panel)}>
-                        <SpinnerGap size={28} className="mx-auto mb-3 animate-spin text-[#0d9f7c]" />
-                        <div className="text-base font-semibold">Starting live preview</div>
-                        <div className={cx("mt-2 text-sm leading-6", p.muted)}>
-                          Waking the sandbox and launching the dev server. The preview will open here automatically.
-                        </div>
-                      </div>
+                  <div className="flex h-full min-h-0 flex-col">
+                    <div className={cx("flex h-10 items-center gap-2 border-b px-3 text-xs", p.side)}>
+                      <span className={cx("font-mono uppercase tracking-[0.18em]", p.faint)}>
+                        fixed demo preview
+                      </span>
+                      <input
+                        readOnly
+                        value={`${window.location.origin}${DEMO_SITE_URL}`}
+                        className={cx("min-w-0 flex-1 rounded border px-2 py-1 font-mono text-xs outline-none", p.input)}
+                        onFocus={(event) => event.currentTarget.select()}
+                      />
+                      <a href={DEMO_SITE_URL} target="_blank" rel="noreferrer" className={cx("grid h-7 w-8 place-items-center rounded border", p.inverseButton)} title="Open preview in new tab">
+                        <ArrowSquareOut size={15} />
+                      </a>
                     </div>
-                  ) : runtime?.preview_url ? (
-                    <div className="flex h-full min-h-0 flex-col">
-                      <div className={cx("flex h-10 items-center gap-2 border-b px-3 text-xs", p.side)}>
-                        <span className={cx("font-mono uppercase tracking-[0.18em]", p.faint)}>
-                          {runtime.framework || "preview"}:{runtime.preview_port || "auto"}
-                        </span>
-                        <input
-                          readOnly
-                          value={visiblePreviewUrl}
-                          className={cx("min-w-0 flex-1 rounded border px-2 py-1 font-mono text-xs outline-none", p.input)}
-                          onFocus={(event) => event.currentTarget.select()}
-                        />
-                        <a href={visiblePreviewUrl} target="_blank" rel="noreferrer" className={cx("grid h-7 w-8 place-items-center rounded border", p.inverseButton)} title="Open preview in new tab">
-                          <ArrowSquareOut size={15} />
-                        </a>
-                      </div>
-                      <iframe title="Live preview" src={visiblePreviewUrl} className="min-h-0 flex-1 bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
-                    </div>
-                  ) : runtime && ["preview_ready", "command_succeeded", "ready", "bridge_error"].includes(runtime.status) ? (
-                    <div className="flex h-full items-center justify-center p-6">
-                      <div className={cx("w-full max-w-md rounded-lg border p-5 text-center", p.panel)}>
-                        <SpinnerGap size={28} className="mx-auto mb-3 animate-spin text-[#0d9f7c]" />
-                        <div className="mb-2 text-lg font-semibold">Preparing live preview</div>
-                        <div className={cx("text-sm leading-6", p.muted)}>
-                          Arevei is waking the sandbox, installing dependencies when needed, and starting the dev server.
-                        </div>
-                        <button onClick={ensurePreview} className={cx("mt-5 rounded-md px-4 py-2 text-sm font-semibold", p.button)}>
-                          Retry preview
-                        </button>
-                      </div>
-                    </div>
-                  ) : preview?.html ? (
-                    <iframe title="Workspace preview" srcDoc={preview.html} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms" />
-                  ) : (
-                    <div className={cx("grid h-full place-items-center", p.faint)}>Preview port opens here.</div>
-                  )
+                    <iframe title="DemoBiz preview" srcDoc={DEMO_PREVIEW_HTML} className="min-h-0 flex-1 bg-white" sandbox="allow-scripts allow-forms" />
+                  </div>
                 ) : rightView === "logs" ? (
                   <div className={cx("h-full overflow-auto p-5 font-mono text-xs", p.muted)}>
                     {runtimeLogs.length === 0 ? "No logs yet." : runtimeLogs.map((log) => <div key={log.id} className="mb-2"><span className="text-[#0d9f7c]">{log.level}</span> {log.message}</div>)}

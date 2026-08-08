@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { api, withPreviewAuth } from "../../lib/api";
+import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import {
   ArrowRight,
@@ -31,6 +31,7 @@ import {
 
 const LOGO = "/arevei-logo-mark.png";
 const CONTACT_EMAIL = "vinay@arevei.com";
+const DEMO_SITE_URL = "/demo/demobiz";
 
 function demoNotice() {
   window.alert(`This is demo website content. Kindly contact with Arevei Team for website manager.\n\n${CONTACT_EMAIL}`);
@@ -225,10 +226,8 @@ function SiteMock({ compact = false }) {
   );
 }
 
-function BuildProgress({ build, siteSlug, onDashboard }) {
-  const hasWorkspacePreview = Boolean(build.workspaceId && build.previewUrl);
-  const authedPreviewUrl = hasWorkspacePreview ? withPreviewAuth(build.previewUrl) : "";
-  const previewHref = hasWorkspacePreview ? authedPreviewUrl : siteSlug ? `/s/${siteSlug}` : "/admin/dev";
+function BuildProgress({ build, onDashboard }) {
+  const previewHref = DEMO_SITE_URL;
   const steps = [
     ["Understanding Your Business", "Analyzing your business details and goals"],
     ["Planning Your Website", "Creating sitemap and strategy"],
@@ -297,18 +296,10 @@ function BuildProgress({ build, siteSlug, onDashboard }) {
             </div>
             <div className="aw-glass-card rounded-xl p-5">
               <div className="mb-4 flex items-center justify-between">
-                <div><div className="font-semibold">Live Preview</div><div className="text-sm text-white/55">This is a live preview of your website being built.</div></div>
+                <div><div className="font-semibold">Demo Preview</div><div className="text-sm text-white/55">This stable preview stays available without waking a runtime.</div></div>
                 <div className="flex rounded-xl bg-white/7 p-1 text-white/55"><button className="rounded-lg bg-[#12463f] p-3 text-[#49e8ca]"><Monitor /></button><button className="p-3"><SquaresFour /></button></div>
               </div>
-              {hasWorkspacePreview ? (
-                <iframe
-                  title="Workspace preview"
-                  src={authedPreviewUrl}
-                  className="h-[320px] w-full rounded-xl border border-white/[.08] bg-[#091018]"
-                />
-              ) : (
-                <SiteMock />
-              )}
+              <SiteMock />
               <div className="mt-6 rounded-2xl border border-white/10 p-5">
                 <div className="flex items-center justify-between text-sm text-white/65"><span>Overall Progress</span><span>Est. time remaining {build.progress >= 100 ? "Ready" : "2 - 3 mins"}</span></div>
                 <div className="mt-2 flex items-center gap-5"><span className="text-3xl font-bold text-[#c7ff4a]">{build.progress}%</span><div className="h-2 flex-1 rounded-full bg-white/8"><div className="aw-progress-fill h-full rounded-full bg-[#49e8ca]" style={{ width: `${build.progress}%` }} /></div></div>
@@ -666,9 +657,7 @@ function DashboardHome({ site, userName, mode, setMode, build, onStartBuild, bui
     [ChartLineUp, "Conversion Rate (7d)", "2.58%", "15.9%"],
     [Clock, "Avg. Session Duration (7d)", "2m 46s", "9.4%"],
   ];
-  const hasWorkspacePreview = Boolean(build.workspaceId && build.previewUrl);
-  const authedPreviewUrl = hasWorkspacePreview ? withPreviewAuth(build.previewUrl) : "";
-  const liveHref = hasWorkspacePreview ? authedPreviewUrl : site?.slug ? `/s/${site.slug}` : "/admin/dev";
+  const liveHref = DEMO_SITE_URL;
   const displayDomain = site?.domain || "";
   const panelMap = {
     meetings: {
@@ -919,13 +908,7 @@ function DashboardHome({ site, userName, mode, setMode, build, onStartBuild, bui
                 <div className="aw-glass-card flex min-w-0 flex-col rounded-2xl p-6">
                   <h2 className="mb-4 text-lg font-semibold">Website Overview</h2>
                   <div className="grid min-w-0 flex-1 gap-5 sm:grid-cols-[minmax(0,1.15fr)_minmax(190px,.85fr)]">
-                    {hasWorkspacePreview ? (
-                      <iframe
-                        title="Workspace preview"
-                        src={authedPreviewUrl}
-                        className="h-[180px] w-full rounded-xl border border-white/[.08] bg-[#091018]"
-                      />
-                    ) : !build.workspaceId ? (
+                    {!build.workspaceId ? (
                       <div className="flex h-[180px] flex-col items-center justify-center rounded-xl border border-dashed border-white/[.12] bg-white/[.025] p-5 text-center">
                         <Sparkle size={24} className="mb-3 text-[#49e8ca]" />
                         <div className="text-sm font-semibold">No workspace yet</div>
@@ -1124,7 +1107,7 @@ export default function Dashboard() {
       const workspace = res.data?.workspace;
       const runtime = res.data?.runtime;
       if (workspace?.id && runtime?.preview_url) {
-        updateBuild({ workspaceId: workspace.id, previewUrl: runtime.preview_url, progress: 100, status: "Ready to review" });
+        updateBuild({ workspaceId: workspace.id, previewUrl: DEMO_SITE_URL, progress: 100, status: "Ready to review" });
         if (stage === "setup" || stage === "choose") setStagePersisted("dashboard");
       } else if (workspace?.id) {
         updateBuild({ workspaceId: workspace.id, previewUrl: null });
@@ -1153,21 +1136,11 @@ export default function Dashboard() {
         prompt: "Build a polished DemoBiz growth website using the Arevei fixed starter template with home, services, blog, contact, SEO-ready content, and modern dark preview styling.",
       });
       const workspaceId = project.data?.id || project.data?.workspace?.id;
-      updateBuild({ progress: 58, status: "Workspace created", workspaceId });
-      if (workspaceId) {
-        try {
-          const runtimeStart = await api.post(`/workspaces/${workspaceId}/runtime/start`, {});
-          updateBuild({ progress: 72, status: "Runtime ready", previewUrl: runtimeStart.data?.preview_url || null });
-          const preview = await api.post(`/workspaces/${workspaceId}/runtime/ensure-preview`);
-          updateBuild({ progress: 100, status: "Ready to review", previewUrl: preview.data?.runtime?.preview_url || preview.data?.preview_url || null });
-        } catch {
-          updateBuild({ progress: 84, status: "Workspace ready" });
-        }
-      }
+      updateBuild({ progress: 100, status: "Ready to review", workspaceId, previewUrl: DEMO_SITE_URL });
       toast.success("Demo website template loaded into AI Workspace");
     } catch (err) {
-      updateBuild({ progress: 46, status: "Demo preview ready" });
-      toast.error(err.response?.data?.detail || "Showing demo preview while workspace setup continues.");
+      updateBuild({ progress: 100, status: "Demo preview ready", previewUrl: DEMO_SITE_URL });
+      toast.error(err.response?.data?.detail || "Showing the fixed DemoBiz preview.");
     } finally {
       setBuilding(false);
     }
@@ -1187,6 +1160,6 @@ export default function Dashboard() {
   }
   if (stage === "setup") return <SetupWelcome onFillDemo={() => setStagePersisted("choose")} />;
   if (stage === "choose") return <ChooseFlow userName={userName} onBuild={startBuild} onDashboard={() => setStagePersisted("dashboard")} building={building} />;
-  if (stage === "build") return <BuildProgress build={build} siteSlug={site?.slug} onDashboard={() => setStagePersisted("dashboard")} />;
+  if (stage === "build") return <BuildProgress build={build} onDashboard={() => setStagePersisted("dashboard")} />;
   return <DashboardHome site={site} userName={userName} mode={mode} setMode={setMode} build={build} onStartBuild={startBuild} building={building} />;
 }
